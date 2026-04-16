@@ -12,6 +12,9 @@ import time
 import json
 
 INSTANCE_NAME = 'api_app'
+WINDOW_SECONDS = 10  # Time window for calculating Packet-In rate
+PACKET_IN_THRESHOLD = 100  # Packet-In events per second threshold for attack detection
+ATTACK_PACKETS = 200  # Number of Packet-In events to simulate an attack
 
 class SelfHealingSDNController(app_manager.RyuApp):
     """
@@ -61,20 +64,21 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.packet_in_events = deque() # timestamps of recent PI events
         
         # attack detection threshold
-        self.packet_in_threshold = 100
+        self.packet_in_threshold = PACKET_IN_THRESHOLD
         self.attack_detected = False
+        self.mitigation_start_time = None
         self.last_detection_time = None
         
         self.logger.info("self healing sdn api app started")
     
-    def _cleanup_old_packets_in_events(self, window_seconds=10):
+    def _cleanup_old_packets_in_events(self, window_seconds=WINDOW_SECONDS):
         """ Keep only recent PI timestamps inside the rolling time window (default=10 secs) """    
         
         now = time.time()
         while self.packet_in_events and (now - self.packet_in_events[0] > window_seconds):
             self.packet_in_events.popleft()
              
-    def _packet_in_rate(self, window_seconds=10):
+    def _packet_in_rate(self, window_seconds=WINDOW_SECONDS):
         """ Keep PI rate over the last window_seconds """     
         
         self._cleanup_old_packets_in_events(window_seconds=window_seconds)
@@ -83,23 +87,26 @@ class SelfHealingSDNController(app_manager.RyuApp):
     def _update_attack_status(self):
         """ Update attack detection status based on PI rate """
         
-        current_rate = self._packet_in_rate(window_seconds=10)
+        current_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
         if current_rate > self.packet_in_threshold:
+            # first time detecting attack, note the time
             if self.attack_detected == False:
                 self.last_detection_time = time.time()
             self.attack_detected = True
         else:
             self.attack_detected = False
+            
+    def _note_mitigation_start(self):
+        """ Note the start time of mitigation
+        """
+        self.mitigation_start_time = time.time()
 
     def get_stats(self):
         """ Returns controller-level stats
-
-        Returns:
-            _type_: _description_
         """
         
         uptime = time.time() - self.start_time
-        packet_in_rate = self._packet_in_rate(window_seconds=10)
+        packet_in_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
         self._update_attack_status()
         
         return {
@@ -160,6 +167,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.packet_in_count = 0
         self.packet_in_events.clear()
         self.attack_detected = False
+        self.mitigation_start_time = None
         self.last_detection_time = None
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -316,12 +324,17 @@ class RestController(ControllerBase):
     REST controller that exposes the custom API routes.
 
     REST routes implemented:
-    - GET  /stats
-    - GET  /switches
-    - GET  /hosts
-    - GET  /flows
-    - GET  /attack/status
-    - POST /config/reset
+    - GET  /stats               - controller stats
+    - GET  /switches            - list of connected switches
+    - GET  /hosts               - list of learned hosts
+    - GET  /flows               - summary of learned flows
+    - GET  /attack/status       - return attack detection status and related metrics
+    - GET  /attack/metrics      - return attack metrics
+    - POST /mitigate/start      - start the mitigation 
+    - POST /mitigate/end        - end the mitigation 
+    - POST /config/reset        - reset controller counters and states
+    - POST /config/threshold    - update the Packet-In threshold
+    - GET  /history             - return recent Packet-In event history
     """
 
     def __init__(self, req, link, data, **config):
@@ -333,7 +346,7 @@ class RestController(ControllerBase):
         """
         GET /stats
 
-        Returns:
+        Returns controller stats:
         - total Packet-In events
         - controller uptime
         - number of connected switches and hosts
@@ -391,24 +404,61 @@ class RestController(ControllerBase):
         
     @route('attack_status', "/attack/status", methods=['GET'])
     def attack_status(self, req, **kwargs):
-        """ TODO: DOES NOT WORK
+        """ 
         GET  /attack/status
 
-        Returns controller determination of whether under PI saturation or not
+        Returns controller attack detection status and related metrics such as:
+            - attack detected (T/F)
+            - current Packet-In-rate
+            - Packet-In threshold
+            - last attack detection time
         """
         self.app._update_attack_status()
         
         data = {
             "attack detected": self.app.attack_detected,
-            "packet_in_rate": round(self.app._packet_in_rate(10), 2),
+            "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
             "threshold_rate": self.app.packet_in_threshold,
-            "last_detection_time": self.app.last_detection_time
+            "attack_detection_time": self.app.last_detection_time
         }
         body = json.dumps(data, indent=2) + "\n"
         return Response(
             content_type='application/json',
             text=body
         )
+        
+    @route('attack_metrics', "/attack/metrics", methods=['GET'])
+    def attack_metrics(self, req, **kwargs):
+        """
+        GET /attack/metrics
+        
+        Return metrics related to attack detection such as:
+            - hosts involved
+            - suspicious flows
+            - recent Packet-In history
+        """
+        pass
+    
+    @route('mitigate_start', "/mitigate/start", methods=['POST'])
+    def mitigate_start(self, req, **kwargs):
+        """
+        POST /mitigate/start
+        
+        Simulate the start of the mitigation strategy
+        """
+        
+        # note mitigation start time
+        mitigation_time_start = self.app._note_mitigation_start()
+        
+        # TODO: mitigation logic
+    
+    @route('mitigate_end', "/mitigate/end", methods=['POST'])
+    def mitigate_end(self, req, **kwargs):
+        """
+        POST /mitigate/end
+        
+        """
+        pass
 
     @route('reset', "/config/reset", methods=['POST'])
     def reset(self, req, **kwargs):
@@ -428,12 +478,52 @@ class RestController(ControllerBase):
             content_type='application/json',
             text=body
         )    
+    
+    @route('update_threshold', "/config/threshold", methods=['POST'])
+    def update_threshold(self, req, **kwargs):
+        """
+        POST /config/threshold
+
+        Update the Packet-In threshold for attack detection
+        """
+        try:
+            data = req.json_body
+            new_threshold = int(data.get("threshold", self.app.packet_in_threshold))
+            self.app.packet_in_threshold = new_threshold
+            
+            message = {
+                "result": "success",
+                "message": f"Packet-In threshold updated to {new_threshold}"
+            }
+        except Exception as e:
+            message = {
+                "result": "error",
+                "message": f"Failed to update threshold: {str(e)}"
+            }
         
-    """ 
-    GET  /attack/metrics    @attack_metrics     - hosts involved, suspcious flows, packet-in history
-    POST /attack/start      @attack_start      - regular traffic features
-    POST /attack/end        @attack_end         - end attack traffic
-    POST /mitigate/start    @mitigate_start     - defense strategies
-    POST /mitigate/end      @mitigate_end       - end defense strategies
-    POST /config/threshold  @update_threshold   - update packet in threshold
-    """
+        body = json.dumps(message, indent=2) + "\n"
+        return Response(
+            content_type='application/json',
+            text=body
+        )
+
+    @route('history', "/history", methods=['GET'])
+    def history(self, req, **kwarsg):
+        """
+        GET /history
+        
+        Return (in timestamps):
+            - recent Packet-In event history
+            - mitigation start time
+            - attack detection timestamp
+        """
+        data = {
+            "packet_in_events": list(self.app.packet_in_events),
+            "mitigation_start_time": self.app.mitigation_start_time,
+            "last_detection_time": self.app.last_detection_time
+        }
+        body = json.dumps(data, indent=2) + "\n"
+        return Response(
+            content_type='application/json',
+            text=body
+        )
