@@ -69,7 +69,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.mitigation_start_time = None
         self.last_detection_time = None
+
+        # mitigation stats
         self.mitigated_drop_count = 0 # count of dropped packets during mitigation
+        self.mitigated_sources = defaultdict(int) # count of mitigated packets per source MAC
         
         self.logger.info("self healing sdn api app started")
     
@@ -122,6 +125,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "attack_detected": self.attack_detected,
             "packet_in_threshold": self.packet_in_threshold,
             "mitigated_drop_count": self.mitigated_drop_count,
+            "mitigated_sources": dict(self.mitigated_sources),
         }
         
     def get_switches(self):
@@ -173,6 +177,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.mitigation_start_time = None
         self.last_detection_time = None
         self.mitigated_drop_count = 0
+        self.mitigated_sources.clear()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -193,7 +198,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        if buffer_id:
+        if buffer_id is not None:
             mod = parser.OFPFlowMod(
                 datapath=datapath,
                 buffer_id=buffer_id,
@@ -224,6 +229,61 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if datapath is not None:
             self.datapaths[datapath.id] = datapath
     
+    def update_packet_in_stats(self):
+        self.packet_in_count += 1 # "packet in" count increase
+        self.packet_in_events.append(time.time())   # update event list with this event's timestamp
+        self._update_attack_status()
+
+    # drop unknown sources during attack mode
+    def should_drop_packet(self, src, dpid, in_port, source_known):
+        if self.attack_detected and not source_known:
+            self.mitigated_drop_count += 1
+            self.mitigated_sources[src] += 1
+            self.logger.warning(
+                "Mitigation: dropping unknown source %s on switch=%s port=%s during attack mode",
+                src, dpid, in_port
+            )
+            return True
+        return False
+    
+    def parse_packet_content(self, msg):
+        datapath = msg.datapath
+        dpid = datapath.id
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
+
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+
+        ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
+        src_ip = ipv4_pkt.src if ipv4_pkt else None
+
+        return {
+            "datapath": datapath,
+            "dpid": dpid,
+            "ofproto": ofproto,
+            "parser": parser,
+            "in_port": in_port,
+            "pkt": pkt,
+            "eth": eth,
+            "src": eth.src,
+            "dst": eth.dst,
+            "src_ip": src_ip,
+        }
+    
+    def learn_host(self, src, src_ip, dpid, in_port):
+        # Record host location
+        self.hosts[src] = {
+            "ip": src_ip,
+            "dpid": dpid,
+            "port": in_port,
+            "last_seen": time.time()
+        }                
+
+        self.mac_to_port.setdefault(dpid, {})
+        self.mac_to_port[dpid][src] = in_port
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         """
@@ -236,64 +296,43 @@ class SelfHealingSDNController(app_manager.RyuApp):
         - installs destination flow entries when possible
         - forwards packets normally like a learning switch
         """
-        #print("debugging: packet in handler called\n")
 
         msg = ev.msg
-        datapath = msg.datapath
-        dpid = datapath.id
-        
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
 
-        in_port = msg.match['in_port']
-        
         # PI stats
-        self.packet_in_count += 1 # "packet in" count increase
-        self.packet_in_events.append(time.time())   # update event list with this event's timestamp
-        self._update_attack_status()
-        
-        pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
+        self.update_packet_in_stats()
+
+        # parse packet + context
+        ctx = self.parse_packet_content(msg)
+
+        datapath = ctx["datapath"]
+        dpid = ctx["dpid"]
+        ofproto = ctx["ofproto"]
+        parser = ctx["parser"]
+        in_port = ctx["in_port"]
+        eth = ctx["eth"]
+        src = ctx["src"]
+        dst = ctx["dst"]
+        src_ip = ctx["src_ip"]
 
         # ignore LLDP packets used for topology discovery
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
 
-        
-        dst = eth.dst
-        src = eth.src
-
-        # checking if the soruce is already known
+        # checking if the source is already known
         source_known = src in self.hosts
 
-        ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
-        src_ip = None
-        
-        if ipv4_pkt:
-            src_ip = ipv4_pkt.src
-        
-        # drop unknown sources during attack mode
-        if self.attack_detected and not source_known:
-            self.mitigated_drop_count += 1
-            self.logger.warning(
-                "Mitigation: dropping unknown source %s on switch=%s port=%s during attack mode",
-                src, dpid, in_port
-            )
+        # mitigation: drop unknown sources during attack mode
+        if self.should_drop_packet(src, dpid, in_port, source_known):
             return
-        
+
         # Record host location
-        self.hosts[src] = {
-            "ip": src_ip,
-            "dpid": dpid,
-            "port": in_port,
-            "last_seen": time.time()
-        }                
+        self.learn_host(src, src_ip, dpid, in_port)
 
-        self.mac_to_port.setdefault(dpid, {})
-        self.logger.info("Packet in: switch=%s src=%s dst=%s in_port=%s", dpid, src, dst, in_port)
-
-        # learn the source MAC address and the port it came from
-        self.mac_to_port[dpid][src] = in_port
+        self.logger.info(
+            "Packet in: switch=%s src=%s dst=%s in_port=%s",
+            dpid, src, dst, in_port
+        )
 
         # if destination MAC is known, send to that port, otherwise flood
         if dst in self.mac_to_port[dpid]:
@@ -305,34 +344,44 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         # install a forwarding rule for learned hosts to avoid future controller hops
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-            
+            match = parser.OFPMatch(
+                in_port=in_port,
+                eth_dst=dst,
+                eth_src=src
+            )
+
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
                 self.add_flow(
-                    datapath=datapath, 
-                    priority=1, 
-                    match=match, 
+                    datapath=datapath,
+                    priority=1,
+                    match=match,
                     actions=actions,
                     buffer_id=msg.buffer_id
                 )
                 return
             else:
                 self.add_flow(
-                    datapath=datapath, 
-                    priority=1, 
-                    match=match, 
+                    datapath=datapath,
+                    priority=1,
+                    match=match,
                     actions=actions
                 )
-                
+
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
 
         out = parser.OFPPacketOut(
-            datapath=datapath, 
+            datapath=datapath,
             buffer_id=msg.buffer_id,
-            in_port=in_port, 
-            actions=actions, 
+            in_port=in_port,
+            actions=actions,
             data=data
         )
         datapath.send_msg(out)
+
+    def get_mitigation_summary(self):
+        return {
+            "mitigated_drop_count": self.mitigated_drop_count,
+            "mitigated_sources": dict(self.mitigated_sources)
+        }

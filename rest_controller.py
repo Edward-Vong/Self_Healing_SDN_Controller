@@ -124,7 +124,18 @@ class RestController(ControllerBase):
             - suspicious flows
             - recent Packet-In history
         """
-        pass
+        data = {
+            "attack_detected": self.app.attack_detected,
+            "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
+            "packet_in_threshold": self.app.packet_in_threshold,
+            "mitigation": self.app.get_mitigation_summary()
+        }
+
+        body = json.dumps(data, indent=2) + "\n"
+        return Response(
+            content_type='application/json',
+            text=body
+        )
     
     @route('mitigate_start', "/mitigate/start", methods=['POST'])
     def mitigate_start(self, req, **kwargs):
