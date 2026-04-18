@@ -73,8 +73,47 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # mitigation stats
         self.mitigated_drop_count = 0 # count of dropped packets during mitigation
         self.mitigated_sources = defaultdict(int) # count of mitigated packets per source MAC
+
+        self.source_packet_counts = defaultdict(int)
+        self.source_last_reset = time.time()
+        self.source_rate_threshold = 50  # small number for testing
+
+        # drop counters for unknown and over-rate sources during attack mode
+        self.dropped_unknown_count = 0
+        self.dropped_overrate_count = 0
+
+        # statistics for source trust evaluation
+        self.source_seen_counts = defaultdict(int)
+        self.trusted_sources = set()
+        self.trust_threshold = 3  # number of sightings before trust
         
         self.logger.info("self healing sdn api app started")
+
+    # moved reset_counters closer to initialization because it was really annoying scrolling back and forth
+    def reset_counters(self):
+        """ Reset controller counters
+        """
+        self.start_time = time.time()
+        self.packet_in_count = 0
+        self.packet_in_events.clear()
+        self.attack_detected = False
+        self.mitigation_start_time = None
+        self.last_detection_time = None
+
+        # reset mitigation stats
+        self.mitigated_drop_count = 0
+        self.mitigated_sources.clear()
+
+        # reset source rate tracking
+        self.source_packet_counts.clear()
+        self.source_last_reset = time.time()
+
+        # reset drop counters of unknown and over-rate sources
+        self.dropped_unknown_count = 0
+        self.dropped_overrate_count = 0
+
+        self.source_seen_counts.clear()
+        self.trusted_sources.clear()
     
     def _cleanup_old_packets_in_events(self, window_seconds=WINDOW_SECONDS):
         """ Keep only recent PI timestamps inside the rolling time window (default=10 secs) """    
@@ -105,6 +144,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         """ Note the start time of mitigation
         """
         self.mitigation_start_time = time.time()
+        return self.mitigation_start_time
 
     def get_stats(self):
         """ Returns controller-level stats
@@ -166,18 +206,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
                     "output_port": port
                 })
         return flows
-    
-    def reset_counters(self):
-        """ Reset controller counters
-        """
-        self.start_time = time.time()
-        self.packet_in_count = 0
-        self.packet_in_events.clear()
-        self.attack_detected = False
-        self.mitigation_start_time = None
-        self.last_detection_time = None
-        self.mitigated_drop_count = 0
-        self.mitigated_sources.clear()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -229,21 +257,52 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if datapath is not None:
             self.datapaths[datapath.id] = datapath
     
+    def update_source_rate(self, src):
+        now = time.time()
+
+        # reset every WINDOW_SECONDS
+        if now - self.source_last_reset > WINDOW_SECONDS:
+            self.source_packet_counts.clear()
+            self.source_last_reset = now
+
+        self.source_packet_counts[src] += 1
+
     def update_packet_in_stats(self):
         self.packet_in_count += 1 # "packet in" count increase
         self.packet_in_events.append(time.time())   # update event list with this event's timestamp
         self._update_attack_status()
 
     # drop unknown sources during attack mode
-    def should_drop_packet(self, src, dpid, in_port, source_known):
-        if self.attack_detected and not source_known:
+    def should_drop_packet(self, src, dpid, in_port, source_known, source_trusted):
+        # logic to auto-drop packets from unknown sources during attack mode
+        if self.attack_detected and not source_trusted:
             self.mitigated_drop_count += 1
+            self.dropped_unknown_count += 1
             self.mitigated_sources[src] += 1
             self.logger.warning(
                 "Mitigation: dropping unknown source %s on switch=%s port=%s during attack mode",
                 src, dpid, in_port
             )
             return True
+
+        
+        """ 
+        logic to drop packets from known sources that exceed a certain delivery rate during attack mode
+            - I wanted to set up a white listing function for the project, but given the spoofing circumstances 
+              or possible penetration attacks, known sources are not fully trustworthy. 
+              Therefore, I set up a rate threshold for known sources as well, which is a more flexible and safer approach.
+        """
+        if self.attack_detected and source_known:
+            if self.source_packet_counts[src] > self.source_rate_threshold:
+                self.mitigated_drop_count += 1
+                self.dropped_overrate_count += 1
+                self.mitigated_sources[src] += 1
+                self.logger.warning(
+                    "Mitigation: dropping OVER-RATE source %s on switch=%s port=%s",
+                    src, dpid, in_port
+                )
+                return True
+
         return False
     
     def parse_packet_content(self, msg):
@@ -284,6 +343,16 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.mac_to_port.setdefault(dpid, {})
         self.mac_to_port[dpid][src] = in_port
 
+    def update_source_trust(self, src):
+        # only build trust outside attack mode
+        if self.attack_detected:
+            return
+
+        self.source_seen_counts[src] += 1
+
+        if self.source_seen_counts[src] >= self.trust_threshold:
+            self.trusted_sources.add(src)
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         """
@@ -321,9 +390,13 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         # checking if the source is already known
         source_known = src in self.hosts
+        self.update_source_rate(src)
+
+        self.update_source_trust(src)
+        source_trusted = src in self.trusted_sources
 
         # mitigation: drop unknown sources during attack mode
-        if self.should_drop_packet(src, dpid, in_port, source_known):
+        if self.should_drop_packet(src, dpid, in_port, source_known, source_trusted):
             return
 
         # Record host location
@@ -383,5 +456,13 @@ class SelfHealingSDNController(app_manager.RyuApp):
     def get_mitigation_summary(self):
         return {
             "mitigated_drop_count": self.mitigated_drop_count,
-            "mitigated_sources": dict(self.mitigated_sources)
+            "dropped_unknown_count": self.dropped_unknown_count,
+            "dropped_overrate_count": self.dropped_overrate_count,
+            "mitigated_sources": dict(self.mitigated_sources),
+            "source_rate_threshold": self.source_rate_threshold,
+            "source_packet_counts": dict(self.source_packet_counts),
+            "trust_threshold": self.trust_threshold,
+            "trusted_sources": list(self.trusted_sources),
+            "source_seen_counts": dict(self.source_seen_counts),
         }
+
