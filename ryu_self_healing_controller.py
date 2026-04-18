@@ -1,20 +1,21 @@
+import time
+from collections import defaultdict, deque
+
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
-from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ether_types, ipv4
-
+from ryu.ofproto import ofproto_v1_3
 from ryu.app.wsgi import ControllerBase, WSGIApplication, route
-from webob import Response
 
-from collections import defaultdict, deque
-import time
-import json
+from config import (
+    INSTANCE_NAME, 
+    WINDOW_SECONDS, 
+    PACKET_IN_THRESHOLD, 
+    CONTROLLER_NAME, 
+)
 
-INSTANCE_NAME = 'api_app'
-WINDOW_SECONDS = 10  # Time window for calculating Packet-In rate
-PACKET_IN_THRESHOLD = 100  # Packet-In events per second threshold for attack detection
-ATTACK_PACKETS = 200  # Number of Packet-In events to simulate an attack
+from rest_controller import RestController
 
 class SelfHealingSDNController(app_manager.RyuApp):
     """
@@ -68,6 +69,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.mitigation_start_time = None
         self.last_detection_time = None
+        self.mitigated_drop_count = 0 # count of dropped packets during mitigation
         
         self.logger.info("self healing sdn api app started")
     
@@ -118,7 +120,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "packet_in_rate": round(packet_in_rate, 2) if uptime > 0 else 0,
             "learned_mac_entries": sum(len(macs) for macs in self.mac_to_port.values()),
             "attack_detected": self.attack_detected,
-            "packet_in_threshold": self.packet_in_threshold
+            "packet_in_threshold": self.packet_in_threshold,
+            "mitigated_drop_count": self.mitigated_drop_count,
         }
         
     def get_switches(self):
@@ -169,6 +172,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.mitigation_start_time = None
         self.last_detection_time = None
+        self.mitigated_drop_count = 0
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -255,13 +259,27 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
 
+        
         dst = eth.dst
         src = eth.src
 
+        # checking if the soruce is already known
+        source_known = src in self.hosts
+
         ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
         src_ip = None
+        
         if ipv4_pkt:
             src_ip = ipv4_pkt.src
+        
+        # drop unknown sources during attack mode
+        if self.attack_detected and not source_known:
+            self.mitigated_drop_count += 1
+            self.logger.warning(
+                "Mitigation: dropping unknown source %s on switch=%s port=%s during attack mode",
+                src, dpid, in_port
+            )
+            return
         
         # Record host location
         self.hosts[src] = {
@@ -318,212 +336,3 @@ class SelfHealingSDNController(app_manager.RyuApp):
             data=data
         )
         datapath.send_msg(out)
-
-class RestController(ControllerBase):
-    """
-    REST controller that exposes the custom API routes.
-
-    REST routes implemented:
-    - GET  /stats               - controller stats
-    - GET  /switches            - list of connected switches
-    - GET  /hosts               - list of learned hosts
-    - GET  /flows               - summary of learned flows
-    - GET  /attack/status       - return attack detection status and related metrics
-    - GET  /attack/metrics      - return attack metrics
-    - POST /mitigate/start      - start the mitigation 
-    - POST /mitigate/end        - end the mitigation 
-    - POST /config/reset        - reset controller counters and states
-    - POST /config/threshold    - update the Packet-In threshold
-    - GET  /history             - return recent Packet-In event history
-    """
-
-    def __init__(self, req, link, data, **config):
-        super(RestController, self).__init__(req, link, data, **config)
-        self.app = data[INSTANCE_NAME]
-
-    @route('stats', '/stats', methods=['GET'])
-    def stats(self, req, **kwargs):
-        """
-        GET /stats
-
-        Returns controller stats:
-        - total Packet-In events
-        - controller uptime
-        - number of connected switches and hosts
-        - Packet_In total and rate
-        - total flows learned
-        - attack status
-        - Packet_In threshold
-        """
-        #print("DEBUG: app object id in /stats =", id(self.app))
-        #print("DEBUG: packet_in_count in /stats =", self.app.packet_in_count)
-        body = json.dumps(self.app.get_stats(), indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
-        
-    @route('switches', "/switches", methods=['GET'])
-    def switches(self, req, **kwargs):
-        """_
-        GET  /switches
-
-        Returns a list of switches connected to the controller
-        """
-        body = json.dumps(self.app.get_switches(), indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
-    
-    @route('hosts', "/hosts", methods=['GET'])
-    def hosts(self, req, **kwargs):
-        """_
-        GET  /hosts
-
-        Returns a list of hosts learned by the controller
-        """
-        body = json.dumps(self.app.get_hosts(), indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
-    
-    @route('flows', "/flows", methods=['GET'])
-    def flows(self, req, **kwargs):
-        """_
-        GET  /flows
-
-        Returns a summary of learned forwarding rules
-        """
-        body = json.dumps(self.app.get_flows_summary(), indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
-        
-    @route('attack_status', "/attack/status", methods=['GET'])
-    def attack_status(self, req, **kwargs):
-        """ 
-        GET  /attack/status
-
-        Returns controller attack detection status and related metrics such as:
-            - attack detected (T/F)
-            - current Packet-In-rate
-            - Packet-In threshold
-            - last attack detection time
-        """
-        self.app._update_attack_status()
-        
-        data = {
-            "attack detected": self.app.attack_detected,
-            "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
-            "threshold_rate": self.app.packet_in_threshold,
-            "attack_detection_time": self.app.last_detection_time
-        }
-        body = json.dumps(data, indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
-        
-    @route('attack_metrics', "/attack/metrics", methods=['GET'])
-    def attack_metrics(self, req, **kwargs):
-        """
-        GET /attack/metrics
-        
-        Return metrics related to attack detection such as:
-            - hosts involved
-            - suspicious flows
-            - recent Packet-In history
-        """
-        pass
-    
-    @route('mitigate_start', "/mitigate/start", methods=['POST'])
-    def mitigate_start(self, req, **kwargs):
-        """
-        POST /mitigate/start
-        
-        Simulate the start of the mitigation strategy
-        """
-        
-        # note mitigation start time
-        mitigation_time_start = self.app._note_mitigation_start()
-        
-        # TODO: mitigation logic
-    
-    @route('mitigate_end', "/mitigate/end", methods=['POST'])
-    def mitigate_end(self, req, **kwargs):
-        """
-        POST /mitigate/end
-        
-        """
-        pass
-
-    @route('reset', "/config/reset", methods=['POST'])
-    def reset(self, req, **kwargs):
-        """ TODO: DOES NOT WORK
-        GET  /config/reset
-
-        Resets PI counters and states
-        """
-        self.app.reset_counters()
-        
-        message = {
-            "result": "success",
-            "message": "counters and states reset"
-        }
-        body = json.dumps(message, indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )    
-    
-    @route('update_threshold', "/config/threshold", methods=['POST'])
-    def update_threshold(self, req, **kwargs):
-        """
-        POST /config/threshold
-
-        Update the Packet-In threshold for attack detection
-        """
-        try:
-            data = req.json_body
-            new_threshold = int(data.get("threshold", self.app.packet_in_threshold))
-            self.app.packet_in_threshold = new_threshold
-            
-            message = {
-                "result": "success",
-                "message": f"Packet-In threshold updated to {new_threshold}"
-            }
-        except Exception as e:
-            message = {
-                "result": "error",
-                "message": f"Failed to update threshold: {str(e)}"
-            }
-        
-        body = json.dumps(message, indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
-
-    @route('history', "/history", methods=['GET'])
-    def history(self, req, **kwarsg):
-        """
-        GET /history
-        
-        Return (in timestamps):
-            - recent Packet-In event history
-            - mitigation start time
-            - attack detection timestamp
-        """
-        data = {
-            "packet_in_events": list(self.app.packet_in_events),
-            "mitigation_start_time": self.app.mitigation_start_time,
-            "last_detection_time": self.app.last_detection_time
-        }
-        body = json.dumps(data, indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
