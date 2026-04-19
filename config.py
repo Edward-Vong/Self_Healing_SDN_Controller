@@ -6,6 +6,14 @@ PACKET_IN_THRESHOLD = 100
 ATTACK_PACKETS = 200
 CONTROLLER_NAME = "self healing sdn api app"
 
+# Additional constants for controller behavior
+SOURCE_RATE_THRESHOLD = 50
+TRUST_THRESHOLD = 3
+DROP_IDLE_TIMEOUT = 10
+DROP_HARD_TIMEOUT = 20
+DROP_PRIORITY = 100
+LEARNING_PRIORITY = 1
+
 
 def default_host_record():
     return {
