@@ -17,8 +17,8 @@ class RestController(ControllerBase):
     - GET  /flows               - summary of learned flows
     - GET  /attack/status       - return attack detection status and related metrics
     - GET  /attack/metrics      - return attack metrics
-    - POST /mitigate/start      - start the mitigation 
-    - POST /mitigate/end        - end the mitigation 
+    - POST /mitigate/start      - start the mitigation
+    - POST /mitigate/end        - end the mitigation
     - POST /config/reset        - reset controller counters and states
     - POST /config/threshold    - update the Packet-In threshold
     - GET  /history             - return recent Packet-In event history
@@ -146,26 +146,14 @@ class RestController(ControllerBase):
     def mitigate_end(self, req, **kwargs):
         """
         POST /mitigate/end
-        
+
         Manually end mitigation mode
         """
-        try:
-            data = req.json_body if req.body else {}
-        except Exception:
-            data = {}
-
-        clear_probation = bool(data.get("clear_probation", False))
-        restore_trust = bool(data.get("restore_trust", False))
-
-        data = self.app.end_mitigation(
-            clear_probation=clear_probation,
-            restore_trust=restore_trust
-        )
-        return self._json_response(data)
+        return self._json_response(self.app.end_mitigation())
 
     @route('reset', "/config/reset", methods=['POST'])
     def reset(self, req, **kwargs):
-        """ TODO: DOES NOT WORK
+        """ 
         GET  /config/reset
 
         Resets PI counters and states
@@ -201,7 +189,7 @@ class RestController(ControllerBase):
             "message": f"Packet-In threshold updated to {new_threshold}"
         }
         return self._json_response(message)
-
+    
     @route('history', "/history", methods=['GET'])
     def history(self, req, **kwarsg):
         """
@@ -219,42 +207,3 @@ class RestController(ControllerBase):
         }
         return self._json_response(data)
     
-    # endpoint to clear one specific source from probation list 
-    @route('clear_probation_source', "/mitigate/probation/clear", methods=['POST'])
-    def clear_probation_source(self, req, **kwargs):
-        data = self._parse_json_body(req)
-        if data is None or not data.get("src"):
-            message = {
-                "result": "error",
-                "message": "Missing or invalid 'src' in request body"
-            }
-            return self._json_response(message, 400)
-        
-        src = data.get("src")
-        if self.app.clear_probation_source(src):
-            message = {
-                "result": "success",
-                "message": f"{src} removed from probation"
-            }
-        else:
-            message = {
-                "result": "error",
-                "message": f"{src} not found in probation list"
-            }
-        return self._json_response(message)
-    
-    # endpoint to clear all sources from probation list
-    @route('clear_all_probation_sources', "/mitigate/probation/clear_all", methods=['POST'])
-    def clear_all_probation_sources(self, req, **kwargs):
-        try:
-            self.app.clear_all_probation_sources()
-            message = {
-                "result": "success",
-                "message": "all probation sources cleared"
-            }
-        except Exception as e:
-            message = {
-                "result": "error",
-                "message": f"failed to clear all probation sources: {str(e)}"
-            }
-        return self._json_response(message)

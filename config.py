@@ -1,16 +1,13 @@
-from collections import defaultdict
-
 INSTANCE_NAME = "api_app"
 WINDOW_SECONDS = 10
-PACKET_IN_THRESHOLD = 100
-ATTACK_PACKETS = 200
+PACKET_IN_THRESHOLD = 10  # Lowered for 3-switch test setup
 CONTROLLER_NAME = "self healing sdn api app"
 
 # Additional constants for controller behavior
-SOURCE_RATE_THRESHOLD = 50
+SOURCE_RATE_THRESHOLD = 5  # Lowered for testing
 TRUST_THRESHOLD = 3
-DROP_IDLE_TIMEOUT = 10
-DROP_HARD_TIMEOUT = 20
+DROP_IDLE_TIMEOUT = 30  # Increased for testing observation
+DROP_HARD_TIMEOUT = 60
 DROP_PRIORITY = 100
 LEARNING_PRIORITY = 1
 
