@@ -3,7 +3,7 @@ from collections import defaultdict, deque
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER, set_ev_cls
 from ryu.lib.packet import packet, ethernet, ether_types, ipv4
 from ryu.ofproto import ofproto_v1_3
 from ryu.app.wsgi import ControllerBase, WSGIApplication, route
@@ -175,7 +175,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self._update_attack_status()
         
         return {
-            "controller": "self healing sdn api app",
+            "controller": CONTROLLER_NAME,
             "uptime_seconds": round(uptime, 2),
             "connected_switches": len(self.datapaths),
             "known_hosts": len(self.hosts),
@@ -264,7 +264,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
                 )
         datapath.send_msg(mod)
 
-    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, CONFIG_DISPATCHER])
+    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, CONFIG_DISPATCHER, DEAD_DISPATCHER])
     def state_change_handler(self, ev):
         """ Keep track of connected datapaths
 
@@ -273,9 +273,13 @@ class SelfHealingSDNController(app_manager.RyuApp):
             ev (_type_): event
         """
         datapath = ev.datapath
-        
-        # update current datapath to list of datapaths
-        if datapath is not None:
+        if datapath is None:
+            return
+
+        if ev.state == DEAD_DISPATCHER:
+            self.datapaths.pop(datapath.id, None)
+            self.logger.info("Switch %s disconnected", datapath.id)
+        else:
             self.datapaths[datapath.id] = datapath
     
     def update_source_rate(self, src):
