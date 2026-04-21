@@ -20,13 +20,22 @@ import threading
 
 from scapy.all import Ether, IP, UDP, sendp, conf
 
-from test_suite.test_common import (
-    get_attack_metrics as common_get_attack_metrics,
-    get_stats as common_get_stats,
-    parse_cpu_percent as common_parse_cpu_percent,
-    reset_controller as common_reset_controller,
-    set_mitigation_enabled as common_set_mitigation_enabled,
-)
+try:
+    from test_suite.test_common import (
+        get_attack_metrics as common_get_attack_metrics,
+        get_stats as common_get_stats,
+        parse_cpu_percent as common_parse_cpu_percent,
+        reset_controller as common_reset_controller,
+        set_mitigation_enabled as common_set_mitigation_enabled,
+    )
+except ModuleNotFoundError:
+    from test_common import (
+        get_attack_metrics as common_get_attack_metrics,
+        get_stats as common_get_stats,
+        parse_cpu_percent as common_parse_cpu_percent,
+        reset_controller as common_reset_controller,
+        set_mitigation_enabled as common_set_mitigation_enabled,
+    )
 
 # ---------------------------------------------------------------------------
 # Configuration
