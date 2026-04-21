@@ -3,8 +3,11 @@
 Saturation test for the Self-Healing SDN Controller.
 
 Sends Packet_In-forcing traffic at increasing PPS levels and records
-the controller's packet_in_rate at each step.  Goal: find the rate at
-which the controller becomes saturated.
+the controller's packet_in_rate at each step.
+
+For each step, traffic keeps running until the measured Packet_In rate
+reaches the target PPS and stays there for STEP_DURATION seconds.
+If that cannot happen within STEP_TIMEOUT seconds, the test stops.
 
 From the OVS output on node-0:
   - Bridge : ovs-lan1
@@ -33,10 +36,12 @@ from scapy.all import Ether, IP, UDP, sendp, conf
 IFACE          = "eth1"                    # data-plane interface facing OVS
 CONTROLLER_API = "http://128.110.223.3:8080"  # Ryu REST API
 
-# PPS ladder — script holds each level for STEP_DURATION seconds,
-# then records the measured packet_in_rate and moves to the next step.
+# PPS ladder — each step must reach its target rate and hold it for
+# STEP_DURATION seconds before moving to the next step.
 RAMP_STEPS     = [50, 100, 250, 500, 1000, 2000, 5000, 10000]
-STEP_DURATION  = 10   # seconds per step
+STEP_DURATION  = 10   # seconds rate must stay at target once reached
+STEP_TIMEOUT   = 60   # abort current/overall test if target not reached in this time
+RATE_TOLERANCE = 0.95 # consider target reached at >= target_pps * RATE_TOLERANCE
 POLL_INTERVAL  = 2    # seconds between REST polls within a step
 OUTPUT_CSV     = "saturation_results.csv"
 
@@ -88,45 +93,81 @@ def make_packet():
     )
 
 
-def flood(target_pps, duration, stop_event):
-    """Send packets as close to target_pps as possible."""
+def flood(target_pps, stop_event):
+    """Continuously send packets as close to target_pps as possible."""
     interval = 1.0 / target_pps
-    end_time = time.time() + duration
     sent = 0
-    while time.time() < end_time and not stop_event.is_set():
+    next_send = time.perf_counter()
+
+    while not stop_event.is_set():
         sendp(make_packet(), iface=IFACE, verbose=False)
         sent += 1
-        time.sleep(interval)
+
+        next_send += interval
+        sleep_for = next_send - time.perf_counter()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            # If we fall behind at high PPS, resync to avoid runaway drift.
+            next_send = time.perf_counter()
+
     return sent
 
 
 def run_step(target_pps):
     """
-    Flood at target_pps for STEP_DURATION seconds.
-    Returns (avg_pi_rate, peak_pi_rate, sent_packets).
+    Flood at target_pps until measured rate reaches the tolerated target and
+    remains there for STEP_DURATION seconds, or until STEP_TIMEOUT is exceeded.
+    Returns (avg_pi_rate, peak_pi_rate, reached_target, time_to_reach, hold_time, required_rate).
     """
     stop_event = threading.Event()
     flood_thread = threading.Thread(
-        target=flood, args=(target_pps, STEP_DURATION, stop_event), daemon=True
+        target=flood, args=(target_pps, stop_event), daemon=True
     )
     flood_thread.start()
 
     rates = []
-    deadline = time.time() + STEP_DURATION
-    while time.time() < deadline:
+    required_rate = target_pps * RATE_TOLERANCE
+    step_start = time.time()
+    stable_since = None
+    reached_target = False
+    time_to_reach = None
+    hold_time = 0.0
+
+    while True:
+        now = time.time()
+        elapsed = now - step_start
+
+        if elapsed > STEP_TIMEOUT:
+            break
+
         stats = get_stats()
         if stats:
             rate = stats.get("packet_in_rate", 0)
             rates.append(rate)
             print(f"    target={target_pps} pps  measured pi_rate={rate}/s")
+
+            if rate >= required_rate:
+                if stable_since is None:
+                    stable_since = now
+                    reached_target = True
+                    time_to_reach = now - step_start
+
+                hold_time = now - stable_since
+                if hold_time >= STEP_DURATION:
+                    break
+            else:
+                stable_since = None
+                hold_time = 0.0
+
         time.sleep(POLL_INTERVAL)
 
     stop_event.set()
-    flood_thread.join(timeout=STEP_DURATION + 3)
+    flood_thread.join(timeout=3)
 
     avg  = round(sum(rates) / len(rates), 2) if rates else 0
     peak = round(max(rates), 2)             if rates else 0
-    return avg, peak
+    return avg, peak, reached_target and hold_time >= STEP_DURATION, round(time_to_reach, 2) if time_to_reach is not None else None, round(hold_time, 2), round(required_rate, 2)
 
 
 def main():
@@ -135,7 +176,9 @@ def main():
     print(f"Interface      : {IFACE}")
     print(f"Controller API : {CONTROLLER_API}")
     print(f"Ramp steps     : {RAMP_STEPS} pps")
-    print(f"Step duration  : {STEP_DURATION}s each")
+    print(f"Rate tolerance : {int(RATE_TOLERANCE * 100)}% of target")
+    print(f"Hold duration  : {STEP_DURATION}s at target")
+    print(f"Step timeout   : {STEP_TIMEOUT}s max to reach/hold target")
     print()
 
     # Verify controller is up
@@ -156,15 +199,24 @@ def main():
     print("-" * 42)
 
     for target_pps in RAMP_STEPS:
-        print(f"\n  Step: {target_pps} pps for {STEP_DURATION}s ...")
-        avg_rate, peak_rate = run_step(target_pps)
+        print(f"\n  Step: {target_pps} pps (must hold >= target for {STEP_DURATION}s) ...")
+        avg_rate, peak_rate, reached_hold, time_to_reach, hold_time, required_rate = run_step(target_pps)
 
         rows.append({
             "target_pps":   target_pps,
+            "required_pi_rate": required_rate,
             "avg_pi_rate":  avg_rate,
             "peak_pi_rate": peak_rate,
+            "reached_and_held": reached_hold,
+            "time_to_reach_s": time_to_reach,
+            "hold_time_s": hold_time,
         })
-        print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s")
+        if reached_hold:
+            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  reached_in={time_to_reach}s  required>={required_rate}/s")
+        else:
+            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  FAILED to hold >= {required_rate}/s within {STEP_TIMEOUT}s")
+            print("\nStopping test because target PPS could not be reached and held in time.")
+            break
 
         # Cool-down between steps so the window resets cleanly
         time.sleep(5)
@@ -184,7 +236,16 @@ def main():
     try:
         with open(OUTPUT_CSV, "w", newline="") as f:
             writer = csv.DictWriter(
-                f, fieldnames=["target_pps", "avg_pi_rate", "peak_pi_rate"]
+                f,
+                fieldnames=[
+                    "target_pps",
+                    "required_pi_rate",
+                    "avg_pi_rate",
+                    "peak_pi_rate",
+                    "reached_and_held",
+                    "time_to_reach_s",
+                    "hold_time_s",
+                ]
             )
             writer.writeheader()
             writer.writerows(rows)
