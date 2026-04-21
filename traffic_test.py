@@ -43,6 +43,7 @@ STEP_DURATION  = 10   # seconds rate must stay at target once reached
 STEP_TIMEOUT   = 60   # abort current/overall test if target not reached in this time
 RATE_TOLERANCE = 0.95 # consider target reached at >= target_pps * RATE_TOLERANCE
 POLL_INTERVAL  = 2    # seconds between REST polls within a step
+FLOOD_BURST_SIZE = 64 # packets per send call; larger bursts reduce Python overhead
 OUTPUT_CSV     = "saturation_results.csv"
 
 # Destination — unknown dst MAC forces every packet to hit the controller
@@ -95,15 +96,17 @@ def make_packet():
 
 def flood(target_pps, stop_event):
     """Continuously send packets as close to target_pps as possible."""
-    interval = 1.0 / target_pps
+    burst_size = max(1, FLOOD_BURST_SIZE)
+    burst_interval = burst_size / float(target_pps)
     sent = 0
     next_send = time.perf_counter()
 
     while not stop_event.is_set():
-        sendp(make_packet(), iface=IFACE, verbose=False)
-        sent += 1
+        packets = [make_packet() for _ in range(burst_size)]
+        sendp(packets, iface=IFACE, verbose=False)
+        sent += burst_size
 
-        next_send += interval
+        next_send += burst_interval
         sleep_for = next_send - time.perf_counter()
         if sleep_for > 0:
             time.sleep(sleep_for)
