@@ -15,7 +15,7 @@ From the OVS output on node-0:
   - Controller : tcp:128.110.223.3:6653  (Ryu REST on port 8080)
 
 Run on node-0 (or node-1/node-2), e.g.:
-  sudo python3 traffic_test.py
+    sudo python3 saturation_test.py
 
 Requires: scapy, requests
   pip3 install scapy requests
@@ -90,6 +90,22 @@ def set_threshold(value):
         return True
     except requests.RequestException as e:
         print(f"  [REST] /config/threshold failed: {e}")
+        return False
+
+
+def set_mitigation_enabled(enabled):
+    """Enable or disable mitigation behavior; returns True on success."""
+    try:
+        r = requests.post(
+            CONTROLLER_API + "/config/mitigation",
+            json={"enabled": enabled},
+            timeout=4,
+        )
+        r.raise_for_status()
+        body = r.json()
+        return body.get("mitigation_enabled") is enabled
+    except (requests.RequestException, ValueError) as e:
+        print(f"  [REST] /config/mitigation failed: {e}")
         return False
 
 
@@ -178,7 +194,7 @@ def run_step(target_pps):
             rate = stats.get("packet_in_rate", 0)
             cpu = parse_cpu_percent(stats)
             rates.append(rate)
-            mitigation_on = stats.get("attack_detected") or stats.get("manual_mitigation")
+            mitigation_on = stats.get("mitigation_active")
             mit_tag = "  [MITIGATION ACTIVE]" if mitigation_on else ""
             if cpu is not None:
                 cpu_rates.append(cpu)
@@ -239,19 +255,19 @@ def main():
     print(f"Controller reachable — uptime={stats.get('uptime_seconds')}s")
     print()
 
-    # Disable auto-mitigation so it doesn't interfere with measurements
-    if not set_threshold(999999):
-        print("ERROR: Could not raise PI threshold — aborting to avoid mitigation bias.")
+    # Disable mitigation so this run measures uncontrolled saturation.
+    if not set_mitigation_enabled(False):
+        print("ERROR: Could not disable mitigation — aborting to avoid protection bias.")
         sys.exit(3)
     if not reset_controller():
         print("ERROR: Could not reset controller state — aborting.")
         sys.exit(4)
 
-    # Confirm the threshold is actually active before sending any traffic
+    # Confirm mitigation is actually disabled before sending any traffic.
     verify = get_stats()
-    active_threshold = verify.get("packet_in_threshold") if verify else None
-    if active_threshold is None or active_threshold < 999999:
-        print(f"ERROR: Controller threshold is {active_threshold!r}, expected 999999.")
+    mitigation_enabled = verify.get("mitigation_enabled") if verify else None
+    if mitigation_enabled is not False:
+        print(f"ERROR: Controller mitigation_enabled is {mitigation_enabled!r}, expected False.")
         print("       Restart the controller and rerun the test.")
         sys.exit(5)
     time.sleep(1)
@@ -287,8 +303,8 @@ def main():
         # Cool-down between steps so the window resets cleanly
         time.sleep(5)
 
-    # Restore a sane threshold
-    set_threshold(10)
+    # Restore mitigation for normal controller operation.
+    set_mitigation_enabled(True)
 
     # Print summary table
     print("\n" + "=" * 42)
