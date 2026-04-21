@@ -22,6 +22,7 @@ Requires: scapy, requests
 """
 
 import csv
+import os
 import random
 import sys
 import time
@@ -192,6 +193,11 @@ def run_step(target_pps):
 
 
 def main():
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        print("ERROR: Scapy sendp() requires raw-socket privileges.")
+        print("       Run with: sudo python3.8 ./test_suite/saturation_test.py")
+        sys.exit(1)
+
     conf.iface = IFACE
 
     print(f"Interface      : {IFACE}")
