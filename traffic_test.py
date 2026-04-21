@@ -82,18 +82,26 @@ def parse_cpu_percent(stats):
 
 
 def set_threshold(value):
+    """Set PI threshold; returns True on success, False on failure."""
     try:
-        requests.post(CONTROLLER_API + "/config/threshold",
-                      json={"threshold": value}, timeout=4)
-    except requests.RequestException:
-        pass
+        r = requests.post(CONTROLLER_API + "/config/threshold",
+                          json={"threshold": value}, timeout=4)
+        r.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        print(f"  [REST] /config/threshold failed: {e}")
+        return False
 
 
 def reset_controller():
+    """Reset counters; returns True on success, False on failure."""
     try:
-        requests.post(CONTROLLER_API + "/config/reset", timeout=4)
-    except requests.RequestException:
-        pass
+        r = requests.post(CONTROLLER_API + "/config/reset", timeout=4)
+        r.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        print(f"  [REST] /config/reset failed: {e}")
+        return False
 
 
 def make_packet():
@@ -170,11 +178,13 @@ def run_step(target_pps):
             rate = stats.get("packet_in_rate", 0)
             cpu = parse_cpu_percent(stats)
             rates.append(rate)
+            mitigation_on = stats.get("attack_detected") or stats.get("manual_mitigation")
+            mit_tag = "  [MITIGATION ACTIVE]" if mitigation_on else ""
             if cpu is not None:
                 cpu_rates.append(cpu)
-                print(f"    target={target_pps} pps  measured pi_rate={rate}/s  cpu={cpu}%")
+                print(f"    target={target_pps} pps  measured pi_rate={rate}/s  cpu={cpu}%{mit_tag}")
             else:
-                print(f"    target={target_pps} pps  measured pi_rate={rate}/s")
+                print(f"    target={target_pps} pps  measured pi_rate={rate}/s{mit_tag}")
 
             if rate >= required_rate:
                 if stable_since is None:
@@ -230,8 +240,20 @@ def main():
     print()
 
     # Disable auto-mitigation so it doesn't interfere with measurements
-    set_threshold(999999)
-    reset_controller()
+    if not set_threshold(999999):
+        print("ERROR: Could not raise PI threshold — aborting to avoid mitigation bias.")
+        sys.exit(3)
+    if not reset_controller():
+        print("ERROR: Could not reset controller state — aborting.")
+        sys.exit(4)
+
+    # Confirm the threshold is actually active before sending any traffic
+    verify = get_stats()
+    active_threshold = verify.get("packet_in_threshold") if verify else None
+    if active_threshold is None or active_threshold < 999999:
+        print(f"ERROR: Controller threshold is {active_threshold!r}, expected 999999.")
+        print("       Restart the controller and rerun the test.")
+        sys.exit(5)
     time.sleep(1)
 
     rows = []
