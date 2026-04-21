@@ -1,11 +1,12 @@
 INSTANCE_NAME = "api_app"
 WINDOW_SECONDS = 10
-PACKET_IN_THRESHOLD = 10  # Lowered for 3-switch test setup
+PACKET_IN_THRESHOLD = 800  # ~62% of observed 1300 PI/s ceiling; leaves headroom for mitigation logic
 CONTROLLER_NAME = "self healing sdn api app"
 
 # Additional constants for controller behavior
-SOURCE_RATE_THRESHOLD = 5  # Lowered for testing
+SOURCE_RATE_THRESHOLD = 50  # Any single source >50 PI/s in 10s window is anomalous
 TRUST_THRESHOLD = 3
+MITIGATION_ENABLED = True
 DROP_IDLE_TIMEOUT = 30  # Increased for testing observation
 DROP_HARD_TIMEOUT = 60
 DROP_PRIORITY = 100
@@ -29,7 +30,10 @@ def default_stats_response():
         "known_hosts": 0,
         "packet_in_total": 0,
         "packet_in_rate": 0.0,
+        "controller_cpu_percent": 0.0,
         "learned_mac_entries": 0,
+        "mitigation_enabled": MITIGATION_ENABLED,
+        "mitigation_active": False,
         "attack_detected": False,
         "packet_in_threshold": PACKET_IN_THRESHOLD,
     }

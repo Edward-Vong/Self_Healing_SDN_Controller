@@ -15,6 +15,7 @@ from config import (
     CONTROLLER_NAME,
     SOURCE_RATE_THRESHOLD,
     TRUST_THRESHOLD,
+    MITIGATION_ENABLED,
     LEARNING_PRIORITY,
 )
 
@@ -66,6 +67,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.start_time = time.time()   # controller uptime start
         self.packet_in_count = 0        # "packet_in" counter
         self.packet_in_events = deque() # timestamps of recent PI events
+
+        # Controller CPU sampling state (process CPU time over wall-clock delta)
+        self._cpu_last_wall = time.time()
+        self._cpu_last_proc = time.process_time()
+        self._cpu_percent = 0.0
         
         # attack detection threshold
         self.packet_in_threshold = PACKET_IN_THRESHOLD
@@ -76,6 +82,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # mitigation stats
         self.mitigated_drop_count = 0 # count of dropped packets during mitigation
         self.mitigated_sources = defaultdict(int) # count of mitigated packets per source MAC
+        self.mitigation_enabled = MITIGATION_ENABLED
         self.manual_mitigation = False
 
         self.source_packet_counts = defaultdict(int)
@@ -124,6 +131,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
     # REST API methods to return stats and topology information
     def get_mitigation_summary(self):
         return {
+            "mitigation_enabled": self.mitigation_enabled,
+            "mitigation_active": self.mitigation_active(),
             "manual_mitigation": self.manual_mitigation,
             "mitigated_drop_count": self.mitigated_drop_count,
             "dropped_unknown_count": self.dropped_unknown_count,
@@ -165,6 +174,37 @@ class SelfHealingSDNController(app_manager.RyuApp):
             self.attack_detected = True
         else:
             self.attack_detected = False
+
+    def set_mitigation_enabled(self, enabled):
+        self.mitigation_enabled = bool(enabled)
+        if not self.mitigation_enabled:
+            self.manual_mitigation = False
+            self.mitigation_start_time = None
+
+        return {
+            "result": "success",
+            "mitigation_enabled": self.mitigation_enabled,
+            "mitigation_active": self.mitigation_active(),
+            "manual_mitigation": self.manual_mitigation,
+            "attack_detected": self.attack_detected,
+        }
+
+    def _controller_cpu_percent(self):
+        """Return controller process CPU usage percentage since last sample."""
+        now_wall = time.time()
+        now_proc = time.process_time()
+
+        delta_wall = now_wall - self._cpu_last_wall
+        delta_proc = now_proc - self._cpu_last_proc
+
+        self._cpu_last_wall = now_wall
+        self._cpu_last_proc = now_proc
+
+        if delta_wall <= 0:
+            return round(self._cpu_percent, 2)
+
+        self._cpu_percent = max(0.0, (delta_proc / delta_wall) * 100.0)
+        return round(self._cpu_percent, 2)
             
     def get_stats(self):
         """ Returns controller-level stats
@@ -172,6 +212,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         
         uptime = time.time() - self.start_time
         packet_in_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
+        controller_cpu_percent = self._controller_cpu_percent()
         self._update_attack_status()
         
         return {
@@ -181,7 +222,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "known_hosts": len(self.hosts),
             "packet_in_total": self.packet_in_count,
             "packet_in_rate": round(packet_in_rate, 2) if uptime > 0 else 0,
+            "controller_cpu_percent": controller_cpu_percent,
             "learned_mac_entries": sum(len(macs) for macs in self.mac_to_port.values()),
+            "mitigation_enabled": self.mitigation_enabled,
+            "mitigation_active": self.mitigation_active(),
             "attack_detected": self.attack_detected,
             "packet_in_threshold": self.packet_in_threshold,
             "manual_mitigation": self.manual_mitigation,
@@ -298,7 +342,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self._update_attack_status()
 
     def mitigation_active(self):
-        return self.manual_mitigation or self.attack_detected
+        return self.mitigation_enabled and (self.manual_mitigation or self.attack_detected)
 
     def _drop_unknown_source(self, datapath, src, dpid, in_port):
         """Drop packets from unknown sources during mitigation."""
@@ -382,6 +426,9 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.mac_to_port[dpid][src] = in_port
 
     def update_source_trust(self, src):
+        if not self.mitigation_enabled:
+            return
+
         # only build trust outside attack mode
         if self.mitigation_active():
             return
@@ -392,6 +439,13 @@ class SelfHealingSDNController(app_manager.RyuApp):
             self.trusted_sources.add(src)
 
     def start_mitigation(self):
+        if not self.mitigation_enabled:
+            return {
+                "result": "error",
+                "message": "mitigation is disabled",
+                "mitigation_enabled": self.mitigation_enabled,
+            }
+
         self.manual_mitigation = True
         self.attack_detected = True
         self.mitigation_start_time = time.time()

@@ -104,6 +104,8 @@ class RestController(ControllerBase):
         self.app._update_attack_status()
         
         data = {
+            "mitigation_enabled": self.app.mitigation_enabled,
+            "mitigation_active": self.app.mitigation_active(),
             "attack_detected": self.app.attack_detected,
             "manual_mitigation": self.app.manual_mitigation,
             "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
@@ -124,6 +126,8 @@ class RestController(ControllerBase):
             - recent Packet-In history
         """
         data = {
+            "mitigation_enabled": self.app.mitigation_enabled,
+            "mitigation_active": self.app.mitigation_active(),
             "attack_detected": self.app.attack_detected,
             "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
             "packet_in_threshold": self.app.packet_in_threshold,
@@ -189,6 +193,31 @@ class RestController(ControllerBase):
             "message": f"Packet-In threshold updated to {new_threshold}"
         }
         return self._json_response(message)
+
+    @route('update_mitigation', "/config/mitigation", methods=['POST'])
+    def update_mitigation(self, req, **kwargs):
+        """
+        POST /config/mitigation
+
+        Enable or disable mitigation behavior.
+        """
+        data = self._parse_json_body(req)
+        if data is None or "enabled" not in data:
+            message = {
+                "result": "error",
+                "message": "Request body must include boolean 'enabled'"
+            }
+            return self._json_response(message, 400)
+
+        enabled = data.get("enabled")
+        if not isinstance(enabled, bool):
+            message = {
+                "result": "error",
+                "message": "'enabled' must be a boolean"
+            }
+            return self._json_response(message, 400)
+
+        return self._json_response(self.app.set_mitigation_enabled(enabled))
     
     @route('history', "/history", methods=['GET'])
     def history(self, req, **kwarsg):
