@@ -43,8 +43,10 @@ STEP_DURATION  = 10   # seconds rate must stay at target once reached
 STEP_TIMEOUT   = 60   # abort current/overall test if target not reached in this time
 RATE_TOLERANCE = 0.95 # consider target reached at >= target_pps * RATE_TOLERANCE
 POLL_INTERVAL  = 2    # seconds between REST polls within a step
-FLOOD_BURST_SIZE = 64 # packets per send call; larger bursts reduce Python overhead
+FLOOD_BURST_SIZE = 256 # packets per send call; larger bursts reduce Python overhead
 OUTPUT_CSV     = "saturation_results.csv"
+CPU_STAT_KEY   = "controller_cpu_percent"
+REQUIRE_CPU_METRICS = True
 
 # Destination — unknown dst MAC forces every packet to hit the controller
 DST_MAC = "ff:ff:ff:ff:ff:ff"
@@ -60,6 +62,23 @@ def get_stats():
     except requests.RequestException as e:
         print(f"  [REST] /stats failed: {e}")
         return None
+
+
+def parse_cpu_percent(stats):
+    """Return CPU percent as float when present and parseable, else None."""
+    value = stats.get(CPU_STAT_KEY)
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    if isinstance(value, str):
+        cleaned = value.strip().rstrip("%")
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+
+    return None
 
 
 def set_threshold(value):
@@ -149,10 +168,10 @@ def run_step(target_pps):
         stats = get_stats()
         if stats:
             rate = stats.get("packet_in_rate", 0)
-            cpu = stats.get("controller_cpu_percent")
+            cpu = parse_cpu_percent(stats)
             rates.append(rate)
-            if isinstance(cpu, (int, float)):
-                cpu_rates.append(float(cpu))
+            if cpu is not None:
+                cpu_rates.append(cpu)
                 print(f"    target={target_pps} pps  measured pi_rate={rate}/s  cpu={cpu}%")
             else:
                 print(f"    target={target_pps} pps  measured pi_rate={rate}/s")
@@ -198,6 +217,15 @@ def main():
     if stats is None:
         print("ERROR: Cannot reach Ryu REST API. Is the controller running?")
         sys.exit(1)
+
+    initial_cpu = parse_cpu_percent(stats)
+    if REQUIRE_CPU_METRICS and initial_cpu is None:
+        keys = ", ".join(sorted(stats.keys())) if isinstance(stats, dict) else "<non-dict response>"
+        print(f"ERROR: /stats is missing a numeric '{CPU_STAT_KEY}' value.")
+        print(f"       Returned keys: {keys}")
+        print("       Restart the controller process that serves this API and rerun the test.")
+        sys.exit(2)
+
     print(f"Controller reachable — uptime={stats.get('uptime_seconds')}s")
     print()
 
