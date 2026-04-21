@@ -27,8 +27,14 @@ import sys
 import time
 import threading
 
-import requests
 from scapy.all import Ether, IP, UDP, sendp, conf
+
+from test_suite.test_common import (
+    get_stats as common_get_stats,
+    parse_cpu_percent as common_parse_cpu_percent,
+    reset_controller as common_reset_controller,
+    set_mitigation_enabled as common_set_mitigation_enabled,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration — edit these to match your setup
@@ -55,69 +61,19 @@ DST_IP  = "10.0.0.1"
 
 
 def get_stats():
-    try:
-        r = requests.get(CONTROLLER_API + "/stats", timeout=4)
-        r.raise_for_status()
-        return r.json()
-    except requests.RequestException as e:
-        print(f"  [REST] /stats failed: {e}")
-        return None
+    return common_get_stats(CONTROLLER_API)
 
 
 def parse_cpu_percent(stats):
-    """Return CPU percent as float when present and parseable, else None."""
-    value = stats.get(CPU_STAT_KEY)
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    if isinstance(value, str):
-        cleaned = value.strip().rstrip("%")
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
-
-    return None
-
-
-def set_threshold(value):
-    """Set PI threshold; returns True on success, False on failure."""
-    try:
-        r = requests.post(CONTROLLER_API + "/config/threshold",
-                          json={"threshold": value}, timeout=4)
-        r.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        print(f"  [REST] /config/threshold failed: {e}")
-        return False
+    return common_parse_cpu_percent(stats, CPU_STAT_KEY)
 
 
 def set_mitigation_enabled(enabled):
-    """Enable or disable mitigation behavior; returns True on success."""
-    try:
-        r = requests.post(
-            CONTROLLER_API + "/config/mitigation",
-            json={"enabled": enabled},
-            timeout=4,
-        )
-        r.raise_for_status()
-        body = r.json()
-        return body.get("mitigation_enabled") is enabled
-    except (requests.RequestException, ValueError) as e:
-        print(f"  [REST] /config/mitigation failed: {e}")
-        return False
+    return common_set_mitigation_enabled(CONTROLLER_API, enabled)
 
 
 def reset_controller():
-    """Reset counters; returns True on success, False on failure."""
-    try:
-        r = requests.post(CONTROLLER_API + "/config/reset", timeout=4)
-        r.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        print(f"  [REST] /config/reset failed: {e}")
-        return False
+    return common_reset_controller(CONTROLLER_API)
 
 
 def make_packet():
