@@ -29,6 +29,7 @@ def default_stats_response():
         "known_hosts": 0,
         "packet_in_total": 0,
         "packet_in_rate": 0.0,
+        "controller_cpu_percent": 0.0,
         "learned_mac_entries": 0,
         "attack_detected": False,
         "packet_in_threshold": PACKET_IN_THRESHOLD,

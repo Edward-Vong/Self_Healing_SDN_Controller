@@ -118,7 +118,8 @@ def run_step(target_pps):
     """
     Flood at target_pps until measured rate reaches the tolerated target and
     remains there for STEP_DURATION seconds, or until STEP_TIMEOUT is exceeded.
-    Returns (avg_pi_rate, peak_pi_rate, reached_target, time_to_reach, hold_time, required_rate).
+    Returns (avg_pi_rate, peak_pi_rate, avg_cpu, peak_cpu,
+             reached_target, time_to_reach, hold_time, required_rate).
     """
     stop_event = threading.Event()
     flood_thread = threading.Thread(
@@ -127,6 +128,7 @@ def run_step(target_pps):
     flood_thread.start()
 
     rates = []
+    cpu_rates = []
     required_rate = target_pps * RATE_TOLERANCE
     step_start = time.time()
     stable_since = None
@@ -144,8 +146,13 @@ def run_step(target_pps):
         stats = get_stats()
         if stats:
             rate = stats.get("packet_in_rate", 0)
+            cpu = stats.get("controller_cpu_percent")
             rates.append(rate)
-            print(f"    target={target_pps} pps  measured pi_rate={rate}/s")
+            if isinstance(cpu, (int, float)):
+                cpu_rates.append(float(cpu))
+                print(f"    target={target_pps} pps  measured pi_rate={rate}/s  cpu={cpu}%")
+            else:
+                print(f"    target={target_pps} pps  measured pi_rate={rate}/s")
 
             if rate >= required_rate:
                 if stable_since is None:
@@ -167,7 +174,9 @@ def run_step(target_pps):
 
     avg  = round(sum(rates) / len(rates), 2) if rates else 0
     peak = round(max(rates), 2)             if rates else 0
-    return avg, peak, reached_target and hold_time >= STEP_DURATION, round(time_to_reach, 2) if time_to_reach is not None else None, round(hold_time, 2), round(required_rate, 2)
+    avg_cpu = round(sum(cpu_rates) / len(cpu_rates), 2) if cpu_rates else None
+    peak_cpu = round(max(cpu_rates), 2) if cpu_rates else None
+    return avg, peak, avg_cpu, peak_cpu, reached_target and hold_time >= STEP_DURATION, round(time_to_reach, 2) if time_to_reach is not None else None, round(hold_time, 2), round(required_rate, 2)
 
 
 def main():
@@ -195,26 +204,30 @@ def main():
     time.sleep(1)
 
     rows = []
-    print(f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}")
-    print("-" * 42)
+    print(f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  {'Avg CPU %':>10}  {'Peak CPU %':>11}")
+    print("-" * 78)
 
     for target_pps in RAMP_STEPS:
         print(f"\n  Step: {target_pps} pps (must hold >= target for {STEP_DURATION}s) ...")
-        avg_rate, peak_rate, reached_hold, time_to_reach, hold_time, required_rate = run_step(target_pps)
+        avg_rate, peak_rate, avg_cpu, peak_cpu, reached_hold, time_to_reach, hold_time, required_rate = run_step(target_pps)
 
         rows.append({
             "target_pps":   target_pps,
             "required_pi_rate": required_rate,
             "avg_pi_rate":  avg_rate,
             "peak_pi_rate": peak_rate,
+            "avg_cpu_percent": avg_cpu,
+            "peak_cpu_percent": peak_cpu,
             "reached_and_held": reached_hold,
             "time_to_reach_s": time_to_reach,
             "hold_time_s": hold_time,
         })
+        avg_cpu_str = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
+        peak_cpu_str = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
         if reached_hold:
-            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  reached_in={time_to_reach}s  required>={required_rate}/s")
+            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  avg_cpu={avg_cpu_str}  peak_cpu={peak_cpu_str}  reached_in={time_to_reach}s  required>={required_rate}/s")
         else:
-            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  FAILED to hold >= {required_rate}/s within {STEP_TIMEOUT}s")
+            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  avg_cpu={avg_cpu_str}  peak_cpu={peak_cpu_str}  FAILED to hold >= {required_rate}/s within {STEP_TIMEOUT}s")
             print("\nStopping test because target PPS could not be reached and held in time.")
             break
 
@@ -226,11 +239,13 @@ def main():
 
     # Print summary table
     print("\n" + "=" * 42)
-    print(f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}")
-    print("-" * 42)
+    print(f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  {'Avg CPU %':>10}  {'Peak CPU %':>11}")
+    print("-" * 78)
     for r in rows:
-        print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>12}  {r['peak_pi_rate']:>13}")
-    print("=" * 42)
+        avg_cpu = r['avg_cpu_percent'] if r['avg_cpu_percent'] is not None else "n/a"
+        peak_cpu = r['peak_cpu_percent'] if r['peak_cpu_percent'] is not None else "n/a"
+        print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>12}  {r['peak_pi_rate']:>13}  {avg_cpu:>10}  {peak_cpu:>11}")
+    print("=" * 78)
 
     # Write CSV
     try:
@@ -242,6 +257,8 @@ def main():
                     "required_pi_rate",
                     "avg_pi_rate",
                     "peak_pi_rate",
+                    "avg_cpu_percent",
+                    "peak_cpu_percent",
                     "reached_and_held",
                     "time_to_reach_s",
                     "hold_time_s",
