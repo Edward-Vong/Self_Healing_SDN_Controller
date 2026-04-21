@@ -9,21 +9,12 @@ For each step, traffic keeps running until the measured Packet_In rate
 reaches the target PPS and stays there for STEP_DURATION seconds.
 If that cannot happen within STEP_TIMEOUT seconds, the test stops.
 
-From the OVS output on node-0:
-  - Bridge : ovs-lan1
-  - Ports  : eth1, eth2
-  - Controller : tcp:128.110.223.3:6653  (Ryu REST on port 8080)
-
-Run on node-0 (or node-1/node-2), e.g.:
-    sudo python3 saturation_test.py
-
-Requires: scapy, requests
-  pip3 install scapy requests
 """
 
-import csv
+import argparse
 import os
 import random
+import socket
 import sys
 import time
 import threading
@@ -59,7 +50,6 @@ STEP_TIMEOUT   = 60   # abort current/overall test if target not reached in this
 RATE_TOLERANCE = 0.95 # consider target reached at >= target_pps * RATE_TOLERANCE
 POLL_INTERVAL  = 2    # seconds between REST polls within a step
 FLOOD_BURST_SIZE = 256 # packets per send call; larger bursts reduce Python overhead
-OUTPUT_CSV     = "saturation_results.csv"
 CPU_STAT_KEY   = "controller_cpu_percent"
 REQUIRE_CPU_METRICS = True
 
@@ -83,6 +73,69 @@ def set_mitigation_enabled(enabled):
 
 def reset_controller():
     return common_reset_controller(CONTROLLER_API)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run unprotected saturation test for the Self-Healing SDN Controller."
+    )
+    parser.add_argument("--wait-for-start", action="store_true")
+    parser.add_argument("--start-host", default="0.0.0.0")
+    parser.add_argument("--start-port", type=int, default=9010)
+    parser.add_argument("--start-token", default="START")
+    parser.add_argument("--start-timeout", type=float, default=600.0)
+    parser.add_argument("--skip-reset-controller", action="store_true")
+    return parser.parse_args()
+
+
+def wait_for_start_signal(host, port, token, timeout_seconds):
+    """Wait for a TCP start signal from a coordinating test script."""
+    deadline = time.time() + timeout_seconds
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((host, port))
+            server.listen(1)
+            server.settimeout(1.0)
+
+            print(
+                f"Waiting for start signal token '{token}' on "
+                f"{host}:{port} (timeout={timeout_seconds}s)..."
+            )
+
+            while time.time() < deadline:
+                try:
+                    conn, addr = server.accept()
+                except socket.timeout:
+                    continue
+                except OSError as exc:
+                    print(f"ERROR: Failed while waiting for start connection: {exc}")
+                    return False
+
+                with conn:
+                    try:
+                        conn.settimeout(2.0)
+                        payload = conn.recv(128)
+                    except OSError as exc:
+                        print(f"WARNING: Failed to read start token from {addr}: {exc}")
+                        continue
+
+                    received = payload.decode("utf-8", errors="replace").strip()
+                    if received == token:
+                        try:
+                            conn.sendall(b"ACK\n")
+                        except OSError:
+                            pass
+                        print(f"Start signal accepted from {addr}.")
+                        return True
+
+                    print(f"WARNING: Invalid start token from {addr}: {received!r}")
+    except OSError as exc:
+        print(f"ERROR: Could not bind/listen on {host}:{port}: {exc}")
+        return False
+
+    return False
 
 
 def make_packet():
@@ -193,6 +246,15 @@ def run_step(target_pps):
 
 
 def main():
+    args = parse_args()
+
+    if args.start_port <= 0 or args.start_port > 65535:
+        print(f"ERROR: --start-port must be in 1..65535, got {args.start_port}.")
+        sys.exit(2)
+    if args.start_timeout <= 0:
+        print(f"ERROR: --start-timeout must be > 0, got {args.start_timeout}.")
+        sys.exit(2)
+
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print("ERROR: Scapy sendp() requires raw-socket privileges.")
         print("       Run with: sudo python3.8 ./test_suite/saturation_test.py")
@@ -225,13 +287,26 @@ def main():
     print(f"Controller reachable — uptime={stats.get('uptime_seconds')}s")
     print()
 
+    if args.wait_for_start:
+        if not wait_for_start_signal(
+            args.start_host,
+            args.start_port,
+            args.start_token,
+            args.start_timeout,
+        ):
+            print("ERROR: Did not receive valid start signal before timeout.")
+            sys.exit(6)
+
     # Disable mitigation so this run measures uncontrolled saturation.
     if not set_mitigation_enabled(False):
         print("ERROR: Could not disable mitigation — aborting to avoid protection bias.")
         sys.exit(3)
-    if not reset_controller():
-        print("ERROR: Could not reset controller state — aborting.")
-        sys.exit(4)
+    if not args.skip_reset_controller:
+        if not reset_controller():
+            print("ERROR: Could not reset controller state — aborting.")
+            sys.exit(4)
+    else:
+        print("WARNING: Skipping controller reset; prior controller state is preserved.")
 
     # Confirm mitigation is actually disabled before sending any traffic.
     verify = get_stats()
@@ -243,8 +318,10 @@ def main():
     time.sleep(1)
 
     rows = []
-    print(f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  {'Avg CPU %':>10}  {'Peak CPU %':>11}")
-    print("-" * 78)
+    top_hdr = f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Avg CPU %':>10}"
+    top_sep = "-" * len(top_hdr)
+    print(top_hdr)
+    print(top_sep)
 
     for target_pps in RAMP_STEPS:
         print(f"\n  Step: {target_pps} pps (must hold >= target for {STEP_DURATION}s) ...")
@@ -277,37 +354,16 @@ def main():
     set_mitigation_enabled(True)
 
     # Print summary table
-    print("\n" + "=" * 42)
-    print(f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  {'Avg CPU %':>10}  {'Peak CPU %':>11}")
-    print("-" * 78)
+    summary_hdr = f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  {'Avg CPU %':>10}  {'Peak CPU %':>11}"
+    summary_sep = "-" * len(summary_hdr)
+    print("\n" + "=" * len(summary_hdr))
+    print(summary_hdr)
+    print(summary_sep)
     for r in rows:
         avg_cpu = r['avg_cpu_percent'] if r['avg_cpu_percent'] is not None else "n/a"
         peak_cpu = r['peak_cpu_percent'] if r['peak_cpu_percent'] is not None else "n/a"
         print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>12}  {r['peak_pi_rate']:>13}  {avg_cpu:>10}  {peak_cpu:>11}")
-    print("=" * 78)
-
-    # Write CSV
-    try:
-        with open(OUTPUT_CSV, "w", newline="") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "target_pps",
-                    "required_pi_rate",
-                    "avg_pi_rate",
-                    "peak_pi_rate",
-                    "avg_cpu_percent",
-                    "peak_cpu_percent",
-                    "reached_and_held",
-                    "time_to_reach_s",
-                    "hold_time_s",
-                ]
-            )
-            writer.writeheader()
-            writer.writerows(rows)
-        print(f"\nResults saved to {OUTPUT_CSV}")
-    except OSError as e:
-        print(f"WARNING: Could not write CSV: {e}")
+    print("=" * len(summary_hdr))
 
     # Find where the rate plateaus (controller can't keep up)
     prev_rate = 0

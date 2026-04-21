@@ -12,7 +12,6 @@ Run on node-0:
   sudo python3 baseline_test.py
 """
 
-import csv
 import os
 import random
 import sys
@@ -62,7 +61,6 @@ DST_IP  = "10.0.0.1"
 RAMP_STEPS    = [10, 50, 100]
 STEP_DURATION = 30    # seconds per step; long enough for flows to install and settle
 POLL_INTERVAL = 2     # seconds between REST polls
-OUTPUT_CSV    = "baseline_results.csv"
 CPU_STAT_KEY  = "controller_cpu_percent"
 
 # Trust seed: packets sent per host before timed measurement begins.
@@ -232,11 +230,11 @@ def main():
     print()
 
     rows = []
-    hdr = (f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Peak PI/s':>10}  "
-           f"{'Avg CPU%':>9}  {'Peak CPU%':>10}  {'Trusted':>8}  {'Hosts':>6}  {'FalsePos':>9}")
-    sep = "-" * len(hdr)
-    print(hdr)
-    print(sep)
+    top_hdr = (f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Avg CPU%':>9}  "
+               f"{'Trusted':>8}  {'Hosts':>6}")
+    top_sep = "-" * len(top_hdr)
+    print(top_hdr)
+    print(top_sep)
 
     for target_pps in RAMP_STEPS:
         print(f"\n  Step: {target_pps} pps ({STEP_DURATION}s window) ...")
@@ -263,30 +261,19 @@ def main():
 
         time.sleep(5)
 
-    print("\n" + "=" * len(hdr))
-    print(hdr)
-    print(sep)
+    summary_hdr = (f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Peak PI/s':>10}  "
+                   f"{'Avg CPU%':>9}  {'Peak CPU%':>10}  {'Trusted':>8}  {'Hosts':>6}")
+    summary_sep = "-" * len(summary_hdr)
+    print("\n" + "=" * len(summary_hdr))
+    print(summary_hdr)
+    print(summary_sep)
     for r in rows:
         avg_c  = r["avg_cpu_percent"]  if r["avg_cpu_percent"]  is not None else "n/a"
         peak_c = r["peak_cpu_percent"] if r["peak_cpu_percent"] is not None else "n/a"
         print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>10}  {r['peak_pi_rate']:>10}  "
               f"{avg_c:>9}  {peak_c:>10}  {r['trusted_sources']:>8}  "
-              f"{r['known_hosts']:>6}  {str(r['false_positive']):>9}")
-    print("=" * len(hdr))
-
-    try:
-        with open(OUTPUT_CSV, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=[
-                "target_pps", "avg_pi_rate", "peak_pi_rate",
-                "avg_cpu_percent", "peak_cpu_percent",
-                "known_hosts", "trusted_sources", "false_positive",
-            ])
-            writer.writeheader()
-            writer.writerows(rows)
-        print(f"\nResults saved to {OUTPUT_CSV}")
-    except OSError as e:
-        print(f"WARNING: Could not write CSV: {e}")
-
+              f"{r['known_hosts']:>6}")
+    print("=" * len(summary_hdr))
 
 if __name__ == "__main__":
     main()
