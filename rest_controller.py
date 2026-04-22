@@ -235,4 +235,57 @@ class RestController(ControllerBase):
             "last_detection_time": self.app.last_detection_time
         }
         return self._json_response(data)
+
+    @route('trust', "/trust", methods=['GET'])
+    def get_trust(self, req, **kwargs):
+        """
+        GET /trust
+
+        Returns trust table state:
+        - trusted_sources list
+        - source_seen_counts
+        - source_packet_counts
+        - trust_threshold
+        """
+        data = self.app.get_trust_state()
+        return self._json_response(data)
+
+    @route('trust_clear', "/trust/clear", methods=['POST'])
+    def trust_clear(self, req, **kwargs):
+        """
+        POST /trust/clear
+
+        Reset trust table and counters for clean test runs.
+        """
+        data = self.app.clear_trust_state()
+        return self._json_response(data)
+
+    @route('trust_watch', "/trust/watch", methods=['POST'])
+    def trust_watch(self, req, **kwargs):
+        """
+        POST /trust/watch?source_mac=XX:XX:XX:XX:XX:XX&timeout_sec=N
+
+        Block until source_mac appears in trusted_sources or timeout expires.
+        Returns {"status": "trusted", "time_to_trust": N} or {"status": "timeout"}
+        """
+        source_mac = req.GET.get('source_mac')
+        timeout_sec = req.GET.get('timeout_sec', '60')
+
+        if not source_mac:
+            return self._json_response(
+                {"result": "error", "message": "source_mac query parameter required"},
+                400
+            )
+
+        try:
+            timeout_sec = int(timeout_sec)
+        except (ValueError, TypeError):
+            return self._json_response(
+                {"result": "error", "message": "timeout_sec must be an integer"},
+                400
+            )
+
+        # Block until trust acquired or timeout
+        result = self.app.wait_for_trust(source_mac, timeout_sec)
+        return self._json_response(result)
     

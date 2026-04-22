@@ -1,4 +1,5 @@
 import time
+import threading
 from collections import defaultdict, deque
 
 from ryu.base import app_manager
@@ -442,6 +443,64 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         if self.source_seen_counts[src] >= self.trust_threshold:
             self.trusted_sources.add(src)
+            # Notify any threads waiting for this source
+            if not hasattr(self, '_trust_watch_events'):
+                self._trust_watch_events = {}
+            if src in self._trust_watch_events:
+                self._trust_watch_events[src].set()
+
+    def get_trust_state(self):
+        """Return current trust table state"""
+        return {
+            "trusted_sources": list(self.trusted_sources),
+            "source_seen_counts": dict(self.source_seen_counts),
+            "source_packet_counts": dict(self.source_packet_counts),
+            "trust_threshold": self.trust_threshold,
+        }
+
+    def clear_trust_state(self):
+        """Clear trust table and counters for clean runs"""
+        self.trusted_sources.clear()
+        self.source_seen_counts.clear()
+        self.source_packet_counts.clear()
+        self.mitigated_sources.clear()
+        return {
+            "result": "success",
+            "message": "trust state cleared",
+        }
+
+    def wait_for_trust(self, src_mac, timeout_sec=60):
+        """
+        Block until source_mac appears in trusted_sources or timeout expires.
+        Returns {"status": "trusted", "time_to_trust": N} or {"status": "timeout"}
+        """
+        if not hasattr(self, '_trust_watch_events'):
+            self._trust_watch_events = {}
+        if not hasattr(self, '_trust_watch_start_times'):
+            self._trust_watch_start_times = {}
+
+        # If already trusted, return immediately
+        if src_mac in self.trusted_sources:
+            return {"status": "trusted", "time_to_trust": 0}
+
+        # Create event for this source
+        event = threading.Event()
+        self._trust_watch_events[src_mac] = event
+        self._trust_watch_start_times[src_mac] = time.time()
+
+        # Wait for event or timeout
+        acquired = event.wait(timeout=timeout_sec)
+
+        # Cleanup
+        if src_mac in self._trust_watch_events:
+            del self._trust_watch_events[src_mac]
+        start_time = self._trust_watch_start_times.pop(src_mac, time.time())
+
+        if acquired and src_mac in self.trusted_sources:
+            time_to_trust = time.time() - start_time
+            return {"status": "trusted", "time_to_trust": round(time_to_trust, 2)}
+        else:
+            return {"status": "timeout", "timeout_sec": timeout_sec}
 
     def start_mitigation(self):
         if not self.mitigation_enabled:

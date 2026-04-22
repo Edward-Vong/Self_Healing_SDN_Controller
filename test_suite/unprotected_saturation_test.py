@@ -7,12 +7,14 @@ Modes:
     for saturation/plateau behavior.
 2) Fixed-rate mode (--pps N): sends traffic at N pps for 90 seconds and
     reports aggregate stats.
-3) Placeholder mode (--granularity): intentionally not implemented yet.
+3) Granularity mode (--granularity): wait for trust_test.py start signal,
+    then run fixed-rate saturation.
 """
 
 import argparse
 import os
 import random
+import socket
 import sys
 import time
 import threading
@@ -88,10 +90,70 @@ def parse_args():
     parser.add_argument(
         "--granularity",
         action="store_true",
-        help="Placeholder for future granularity mode (not implemented yet)",
+        help="Wait for trust_test.py handshake before starting saturation",
+    )
+    parser.add_argument(
+        "--granularity-host",
+        default="0.0.0.0",
+        help="Host/IP to listen on for granularity handshake",
+    )
+    parser.add_argument(
+        "--granularity-port",
+        type=int,
+        default=9010,
+        help="TCP port to listen on for granularity handshake",
+    )
+    parser.add_argument(
+        "--granularity-token",
+        default="START",
+        help="Expected start token from trust_test.py",
+    )
+    parser.add_argument(
+        "--granularity-wait-timeout",
+        type=int,
+        default=180,
+        help="Max wait time in seconds for granularity handshake",
     )
     parser.add_argument("--skip-reset-controller", action="store_true")
     return parser.parse_args()
+
+
+def wait_for_granularity_start(host, port, token, timeout_sec):
+    """Block until a matching START token is received over TCP."""
+    deadline = time.time() + timeout_sec
+    print(f"Granularity wait: listen={host}:{port} token='{token}' timeout={timeout_sec}s")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((host, port))
+        server.listen(1)
+
+        while time.time() < deadline:
+            remaining = max(0.1, deadline - time.time())
+            server.settimeout(min(1.0, remaining))
+            try:
+                conn, addr = server.accept()
+            except socket.timeout:
+                continue
+
+            with conn:
+                conn.settimeout(2.0)
+                try:
+                    payload = conn.recv(64).decode("utf-8", errors="ignore").strip()
+                except OSError:
+                    payload = ""
+
+                if payload == token:
+                    try:
+                        conn.sendall(b"ACK\n")
+                    except OSError:
+                        pass
+                    print(f"Granularity signal accepted from {addr[0]}:{addr[1]}")
+                    return True
+
+                print(f"Granularity signal ignored from {addr[0]}:{addr[1]}: token='{payload}'")
+
+    return False
 
 
 def make_packet():
@@ -276,9 +338,11 @@ def prepare_controller(skip_reset_controller):
 def main():
     args = parse_args()
 
-    if args.granularity:
-        print("ERROR: --granularity mode is not implemented yet.")
-        print("       For now use stepped mode (default) or fixed mode (--pps N).")
+    if args.granularity_port < 1 or args.granularity_port > 65535:
+        print("ERROR: --granularity-port must be in range 1..65535.")
+        sys.exit(2)
+    if args.granularity_wait_timeout <= 0:
+        print("ERROR: --granularity-wait-timeout must be > 0.")
         sys.exit(2)
 
     if args.pps < 0:
@@ -295,6 +359,21 @@ def main():
     print(f"Interface      : {IFACE}")
     print(f"Controller API : {CONTROLLER_API}")
     prepare_controller(args.skip_reset_controller)
+
+    if args.granularity:
+        if args.pps <= 0:
+            print("ERROR: --granularity requires fixed-rate mode: provide --pps N")
+            sys.exit(2)
+        started = wait_for_granularity_start(
+            args.granularity_host,
+            args.granularity_port,
+            args.granularity_token,
+            args.granularity_wait_timeout,
+        )
+        if not started:
+            print("ERROR: Timed out waiting for granularity start signal.")
+            sys.exit(6)
+        print()
 
     # Fixed-rate mode: --pps N
     if args.pps > 0:
