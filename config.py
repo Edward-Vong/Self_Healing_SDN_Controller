@@ -12,6 +12,11 @@ DROP_HARD_TIMEOUT = 60
 DROP_PRIORITY = 100
 LEARNING_PRIORITY = 1
 
+# Mitigation manager constants
+ATTACK_METER_RATE = 100  # Rate limit for attack flows (packets per second)
+ESCALATION_THRESHOLD_SECONDS = 30  # Escalate meter to drop after this duration
+RECOVERY_WINDOW_SECONDS = 60  # Total time for gradual recovery
+
 
 def default_host_record():
     return {
