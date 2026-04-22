@@ -52,6 +52,7 @@ FLOOD_BURST_SIZE = 256 # packets per send call; larger bursts reduce Python over
 CPU_STAT_KEY   = "controller_cpu_percent"
 REQUIRE_CPU_METRICS = True
 FIXED_MODE_SECONDS = 90
+DEFAULT_UNIQUE_SOURCES = False
 
 # Destination — unknown dst MAC forces every packet to hit the controller
 DST_MAC = "ff:ff:ff:ff:ff:ff"
@@ -114,6 +115,12 @@ def parse_args():
         default=180,
         help="Max wait time in seconds for granularity handshake",
     )
+    parser.add_argument(
+        "--unique-sources",
+        action="store_true",
+        default=DEFAULT_UNIQUE_SOURCES,
+        help="Generate random source MAC/IP per packet (higher CPU cost on sender)",
+    )
     parser.add_argument("--skip-reset-controller", action="store_true")
     return parser.parse_args()
 
@@ -156,16 +163,21 @@ def wait_for_granularity_start(host, port, token, timeout_sec):
     return False
 
 
-def make_packet():
-    """Random source MAC/IP so every packet misses the flow table -> Packet_In."""
-    src_mac = "02:%02x:%02x:%02x:%02x:%02x" % tuple(
-        random.randint(0, 255) for _ in range(5)
-    )
-    src_ip = "10.%d.%d.%d" % (
-        random.randint(1, 254),
-        random.randint(1, 254),
-        random.randint(1, 254),
-    )
+def make_packet(unique_sources=False):
+    """Build one attack packet. Randomized sources are optional for generator performance."""
+    if unique_sources:
+        src_mac = "02:%02x:%02x:%02x:%02x:%02x" % tuple(
+            random.randint(0, 255) for _ in range(5)
+        )
+        src_ip = "10.%d.%d.%d" % (
+            random.randint(1, 254),
+            random.randint(1, 254),
+            random.randint(1, 254),
+        )
+    else:
+        src_mac = "02:00:00:00:00:01"
+        src_ip = "10.1.0.1"
+
     base = (
         Ether(src=src_mac, dst=DST_MAC) /
         IP(src=src_ip, dst=DST_IP, ttl=64) /
@@ -175,15 +187,22 @@ def make_packet():
     return base / Raw(load=PAD_BYTE * payload_len)
 
 
-def flood(target_pps, stop_event):
+def flood(target_pps, stop_event, unique_sources=False):
     """Continuously send packets as close to target_pps as possible."""
     burst_size = max(1, FLOOD_BURST_SIZE)
     burst_interval = burst_size / float(target_pps)
     sent = 0
     next_send = time.perf_counter()
 
+    prebuilt_burst = None
+    if not unique_sources:
+        prebuilt_burst = [make_packet(unique_sources=False) for _ in range(burst_size)]
+
     while not stop_event.is_set():
-        packets = [make_packet() for _ in range(burst_size)]
+        if unique_sources:
+            packets = [make_packet(unique_sources=True) for _ in range(burst_size)]
+        else:
+            packets = prebuilt_burst
         sendp(packets, iface=IFACE, verbose=False)
         sent += burst_size
 
@@ -198,7 +217,7 @@ def flood(target_pps, stop_event):
     return sent
 
 
-def run_step(target_pps):
+def run_step(target_pps, unique_sources=False):
     """
     Flood at target_pps until measured rate reaches the tolerated target and
     remains there for STEP_DURATION seconds, or until STEP_TIMEOUT is exceeded.
@@ -207,7 +226,7 @@ def run_step(target_pps):
     """
     stop_event = threading.Event()
     flood_thread = threading.Thread(
-        target=flood, args=(target_pps, stop_event), daemon=True
+        target=flood, args=(target_pps, stop_event, unique_sources), daemon=True
     )
     flood_thread.start()
 
@@ -265,10 +284,14 @@ def run_step(target_pps):
     return avg, peak, avg_cpu, peak_cpu, reached_target and hold_time >= STEP_DURATION, round(time_to_reach, 2) if time_to_reach is not None else None, round(hold_time, 2), round(required_rate, 2)
 
 
-def run_fixed_rate(pps, run_seconds=FIXED_MODE_SECONDS):
+def run_fixed_rate(pps, run_seconds=FIXED_MODE_SECONDS, unique_sources=False):
     """Run a fixed-rate flood and return aggregate stats for the window."""
     stop_event = threading.Event()
-    flood_thread = threading.Thread(target=flood, args=(pps, stop_event), daemon=True)
+    flood_thread = threading.Thread(
+        target=flood,
+        args=(pps, stop_event, unique_sources),
+        daemon=True,
+    )
     flood_thread.start()
 
     rates = []
@@ -358,6 +381,7 @@ def main():
 
     print(f"Interface      : {IFACE}")
     print(f"Controller API : {CONTROLLER_API}")
+    print(f"Unique sources : {args.unique_sources}")
     prepare_controller(args.skip_reset_controller)
 
     if args.granularity:
@@ -382,7 +406,11 @@ def main():
         print(f"Duration      : {FIXED_MODE_SECONDS}s")
         print()
 
-        avg_rate, peak_rate, avg_cpu, peak_cpu = run_fixed_rate(args.pps, FIXED_MODE_SECONDS)
+        avg_rate, peak_rate, avg_cpu, peak_cpu = run_fixed_rate(
+            args.pps,
+            FIXED_MODE_SECONDS,
+            unique_sources=args.unique_sources,
+        )
         avg_cpu_str = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
         peak_cpu_str = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
 
@@ -415,7 +443,10 @@ def main():
 
     for target_pps in RAMP_STEPS:
         print(f"\n  Step: {target_pps} pps (must hold >= target for {STEP_DURATION}s) ...")
-        avg_rate, peak_rate, avg_cpu, peak_cpu, reached_hold, time_to_reach, hold_time, required_rate = run_step(target_pps)
+        avg_rate, peak_rate, avg_cpu, peak_cpu, reached_hold, time_to_reach, hold_time, required_rate = run_step(
+            target_pps,
+            unique_sources=args.unique_sources,
+        )
 
         rows.append({
             "target_pps":   target_pps,
