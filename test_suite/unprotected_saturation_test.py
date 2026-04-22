@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """
-Saturation test for the Self-Healing SDN Controller.
+Unprotected saturation test for the Self-Healing SDN Controller.
 
-Sends Packet_In-forcing traffic at increasing PPS levels and records
-the controller's packet_in_rate at each step.
-
-For each step, traffic keeps running until the measured Packet_In rate
-reaches the target PPS and stays there for STEP_DURATION seconds.
-If that cannot happen within STEP_TIMEOUT seconds, the test stops.
-
+Modes:
+1) Stepped mode (default): no args needed. Walks a PPS ladder and looks
+    for saturation/plateau behavior.
+2) Fixed-rate mode (--pps N): sends traffic at N pps for 90 seconds and
+    reports aggregate stats.
+3) Placeholder mode (--granularity): intentionally not implemented yet.
 """
 
 import argparse
 import os
 import random
-import socket
 import sys
 import time
 import threading
@@ -42,8 +40,7 @@ except ModuleNotFoundError:
 IFACE          = "eth1"                    # data-plane interface facing OVS
 CONTROLLER_API = "http://128.110.223.3:8080"  # Ryu REST API
 
-# PPS ladder — each step must reach its target rate and hold it for
-# STEP_DURATION seconds before moving to the next step.
+# Default stepped-mode ladder.
 RAMP_STEPS     = [50, 100, 250, 500, 1000, 2000, 5000, 10000]
 STEP_DURATION  = 10   # seconds rate must stay at target once reached
 STEP_TIMEOUT   = 60   # abort current/overall test if target not reached in this time
@@ -52,6 +49,7 @@ POLL_INTERVAL  = 2    # seconds between REST polls within a step
 FLOOD_BURST_SIZE = 256 # packets per send call; larger bursts reduce Python overhead
 CPU_STAT_KEY   = "controller_cpu_percent"
 REQUIRE_CPU_METRICS = True
+FIXED_MODE_SECONDS = 90
 
 # Destination — unknown dst MAC forces every packet to hit the controller
 DST_MAC = "ff:ff:ff:ff:ff:ff"
@@ -79,63 +77,19 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Run unprotected saturation test for the Self-Healing SDN Controller."
     )
-    parser.add_argument("--wait-for-start", action="store_true")
-    parser.add_argument("--start-host", default="0.0.0.0")
-    parser.add_argument("--start-port", type=int, default=9010)
-    parser.add_argument("--start-token", default="START")
-    parser.add_argument("--start-timeout", type=float, default=600.0)
+    parser.add_argument(
+        "--pps",
+        type=int,
+        default=0,
+        help="Fixed-rate mode: send this PPS for 90 seconds (example: --pps 1300)",
+    )
+    parser.add_argument(
+        "--granularity",
+        action="store_true",
+        help="Placeholder for future granularity mode (not implemented yet)",
+    )
     parser.add_argument("--skip-reset-controller", action="store_true")
     return parser.parse_args()
-
-
-def wait_for_start_signal(host, port, token, timeout_seconds):
-    """Wait for a TCP start signal from a coordinating test script."""
-    deadline = time.time() + timeout_seconds
-
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server.bind((host, port))
-            server.listen(1)
-            server.settimeout(1.0)
-
-            print(
-                f"Waiting for start signal token '{token}' on "
-                f"{host}:{port} (timeout={timeout_seconds}s)..."
-            )
-
-            while time.time() < deadline:
-                try:
-                    conn, addr = server.accept()
-                except socket.timeout:
-                    continue
-                except OSError as exc:
-                    print(f"ERROR: Failed while waiting for start connection: {exc}")
-                    return False
-
-                with conn:
-                    try:
-                        conn.settimeout(2.0)
-                        payload = conn.recv(128)
-                    except OSError as exc:
-                        print(f"WARNING: Failed to read start token from {addr}: {exc}")
-                        continue
-
-                    received = payload.decode("utf-8", errors="replace").strip()
-                    if received == token:
-                        try:
-                            conn.sendall(b"ACK\n")
-                        except OSError:
-                            pass
-                        print(f"Start signal accepted from {addr}.")
-                        return True
-
-                    print(f"WARNING: Invalid start token from {addr}: {received!r}")
-    except OSError as exc:
-        print(f"ERROR: Could not bind/listen on {host}:{port}: {exc}")
-        return False
-
-    return False
 
 
 def make_packet():
@@ -245,32 +199,41 @@ def run_step(target_pps):
     return avg, peak, avg_cpu, peak_cpu, reached_target and hold_time >= STEP_DURATION, round(time_to_reach, 2) if time_to_reach is not None else None, round(hold_time, 2), round(required_rate, 2)
 
 
-def main():
-    args = parse_args()
+def run_fixed_rate(pps, run_seconds=FIXED_MODE_SECONDS):
+    """Run a fixed-rate flood and return aggregate stats for the window."""
+    stop_event = threading.Event()
+    flood_thread = threading.Thread(target=flood, args=(pps, stop_event), daemon=True)
+    flood_thread.start()
 
-    if args.start_port <= 0 or args.start_port > 65535:
-        print(f"ERROR: --start-port must be in 1..65535, got {args.start_port}.")
-        sys.exit(2)
-    if args.start_timeout <= 0:
-        print(f"ERROR: --start-timeout must be > 0, got {args.start_timeout}.")
-        sys.exit(2)
+    rates = []
+    cpu_rates = []
+    start = time.time()
 
-    if hasattr(os, "geteuid") and os.geteuid() != 0:
-        print("ERROR: Scapy sendp() requires raw-socket privileges.")
-        print("       Run with: sudo python3.8 ./test_suite/saturation_test.py")
-        sys.exit(1)
+    while time.time() - start < run_seconds:
+        stats = get_stats()
+        if stats:
+            rate = stats.get("packet_in_rate", 0)
+            cpu = parse_cpu_percent(stats)
+            rates.append(rate)
+            if cpu is not None:
+                cpu_rates.append(cpu)
+                print(f"    fixed={pps} pps  measured pi_rate={rate}/s  cpu={cpu}%")
+            else:
+                print(f"    fixed={pps} pps  measured pi_rate={rate}/s")
+        time.sleep(POLL_INTERVAL)
 
-    conf.iface = IFACE
+    stop_event.set()
+    flood_thread.join(timeout=3)
 
-    print(f"Interface      : {IFACE}")
-    print(f"Controller API : {CONTROLLER_API}")
-    print(f"Ramp steps     : {RAMP_STEPS} pps")
-    print(f"Rate tolerance : {int(RATE_TOLERANCE * 100)}% of target")
-    print(f"Hold duration  : {STEP_DURATION}s at target")
-    print(f"Step timeout   : {STEP_TIMEOUT}s max to reach/hold target")
-    print()
+    avg = round(sum(rates) / len(rates), 2) if rates else 0
+    peak = round(max(rates), 2) if rates else 0
+    avg_cpu = round(sum(cpu_rates) / len(cpu_rates), 2) if cpu_rates else None
+    peak_cpu = round(max(cpu_rates), 2) if cpu_rates else None
+    return avg, peak, avg_cpu, peak_cpu
 
-    # Verify controller is up
+
+def prepare_controller(skip_reset_controller):
+    """Shared pre-flight: connectivity check, disable mitigation, optional reset."""
     stats = get_stats()
     if stats is None:
         print("ERROR: Cannot reach Ryu REST API. Is the controller running?")
@@ -287,28 +250,16 @@ def main():
     print(f"Controller reachable — uptime={stats.get('uptime_seconds')}s")
     print()
 
-    if args.wait_for_start:
-        if not wait_for_start_signal(
-            args.start_host,
-            args.start_port,
-            args.start_token,
-            args.start_timeout,
-        ):
-            print("ERROR: Did not receive valid start signal before timeout.")
-            sys.exit(6)
-
-    # Disable mitigation so this run measures uncontrolled saturation.
     if not set_mitigation_enabled(False):
         print("ERROR: Could not disable mitigation — aborting to avoid protection bias.")
         sys.exit(3)
-    if not args.skip_reset_controller:
+    if not skip_reset_controller:
         if not reset_controller():
             print("ERROR: Could not reset controller state — aborting.")
             sys.exit(4)
     else:
         print("WARNING: Skipping controller reset; prior controller state is preserved.")
 
-    # Confirm mitigation is actually disabled before sending any traffic.
     verify = get_stats()
     mitigation_enabled = verify.get("mitigation_enabled") if verify else None
     if mitigation_enabled is not False:
@@ -316,6 +267,62 @@ def main():
         print("       Restart the controller and rerun the test.")
         sys.exit(5)
     time.sleep(1)
+
+
+def main():
+    args = parse_args()
+
+    if args.granularity:
+        print("ERROR: --granularity mode is not implemented yet.")
+        print("       For now use stepped mode (default) or fixed mode (--pps N).")
+        sys.exit(2)
+
+    if args.pps < 0:
+        print("ERROR: --pps must be >= 0.")
+        sys.exit(2)
+
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        print("ERROR: Scapy sendp() requires raw-socket privileges.")
+        print("       Run with: sudo python3.8 ./test_suite/unprotected_saturation_test.py")
+        sys.exit(1)
+
+    conf.iface = IFACE
+
+    print(f"Interface      : {IFACE}")
+    print(f"Controller API : {CONTROLLER_API}")
+    prepare_controller(args.skip_reset_controller)
+
+    # Fixed-rate mode: --pps N
+    if args.pps > 0:
+        print(f"Mode          : FIXED")
+        print(f"Requested PPS : {args.pps}")
+        print(f"Duration      : {FIXED_MODE_SECONDS}s")
+        print()
+
+        avg_rate, peak_rate, avg_cpu, peak_cpu = run_fixed_rate(args.pps, FIXED_MODE_SECONDS)
+        avg_cpu_str = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
+        peak_cpu_str = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
+
+        print("\n" + "=" * 60)
+        print("Fixed-Rate Saturation Summary")
+        print("-" * 60)
+        print(f"Requested PPS : {args.pps}")
+        print(f"Avg PI/s      : {avg_rate}")
+        print(f"Peak PI/s     : {peak_rate}")
+        print(f"Avg CPU%      : {avg_cpu_str}")
+        print(f"Peak CPU%     : {peak_cpu_str}")
+        print("=" * 60)
+
+        set_mitigation_enabled(True)
+        return
+
+    # Default stepped mode
+    print("Mode          : STEPPED")
+    print(f"Ramp steps    : {RAMP_STEPS} pps")
+    print(f"Rate tolerance: {int(RATE_TOLERANCE * 100)}% of target")
+    print(f"Hold duration : {STEP_DURATION}s at target")
+    print(f"Step timeout  : {STEP_TIMEOUT}s max to reach/hold target")
+    print()
 
     rows = []
     top_hdr = f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Avg CPU %':>10}"
