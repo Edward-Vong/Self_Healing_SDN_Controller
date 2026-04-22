@@ -45,7 +45,7 @@ CONTROLLER_API = "http://128.110.223.3:8080"  # Ryu REST API
 # Default stepped-mode ladder.
 RAMP_STEPS     = [50, 100, 250, 500, 1000, 2000, 5000, 10000]
 STEP_DURATION  = 10   # seconds rate must stay at target once reached
-STEP_TIMEOUT   = 60   # abort current/overall test if target not reached in this time
+STEP_TIMEOUT   = 30   # abort current/overall test if target not reached in this time
 RATE_TOLERANCE = 0.95 # consider target reached at >= target_pps * RATE_TOLERANCE
 POLL_INTERVAL  = 2    # seconds between REST polls within a step
 FLOOD_BURST_SIZE = 256 # packets per send call; larger bursts reduce Python overhead
