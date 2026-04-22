@@ -225,7 +225,7 @@ def main():
         peak_cpu_s = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
         attack_str = "YES [!]" if false_pos else "No"
 
-          print(f"  -> avg={avg_pi}/s  peak={peak_pi}/s  avg_cpu={avg_cpu_s}  "
+        print(f"  -> avg={avg_pi}/s  peak={peak_pi}/s  avg_cpu={avg_cpu_s}  "
               f"peak_cpu={peak_cpu_s}  attack_triggered={attack_str}")
 
         rows.append({
@@ -249,7 +249,7 @@ def main():
     for r in rows:
         avg_c  = r["avg_cpu_percent"]  if r["avg_cpu_percent"]  is not None else "n/a"
         peak_c = r["peak_cpu_percent"] if r["peak_cpu_percent"] is not None else "n/a"
-          print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>10}  {r['peak_pi_rate']:>10}  "
+        print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>10}  {r['peak_pi_rate']:>10}  "
               f"{avg_c:>9}  {peak_c:>10}  {r['known_hosts']:>6}")
     print("=" * len(summary_hdr))
 
