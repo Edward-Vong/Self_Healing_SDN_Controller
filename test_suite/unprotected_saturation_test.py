@@ -17,7 +17,7 @@ import sys
 import time
 import threading
 
-from scapy.all import Ether, IP, UDP, sendp, conf
+from scapy.all import Ether, IP, UDP, Raw, sendp, conf
 
 try:
     from test_suite.test_common import (
@@ -54,6 +54,8 @@ FIXED_MODE_SECONDS = 90
 # Destination — unknown dst MAC forces every packet to hit the controller
 DST_MAC = "ff:ff:ff:ff:ff:ff"
 DST_IP  = "10.0.0.1"
+TARGET_PACKET_BYTES = 256
+PAD_BYTE = b"X"
 # ---------------------------------------------------------------------------
 
 
@@ -102,11 +104,13 @@ def make_packet():
         random.randint(1, 254),
         random.randint(1, 254),
     )
-    return (
+    base = (
         Ether(src=src_mac, dst=DST_MAC) /
         IP(src=src_ip, dst=DST_IP, ttl=64) /
         UDP(sport=random.randint(1024, 65535), dport=9999)
     )
+    payload_len = max(0, TARGET_PACKET_BYTES - len(base))
+    return base / Raw(load=PAD_BYTE * payload_len)
 
 
 def flood(target_pps, stop_event):
