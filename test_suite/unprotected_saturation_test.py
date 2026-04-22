@@ -53,6 +53,10 @@ CPU_STAT_KEY   = "controller_cpu_percent"
 REQUIRE_CPU_METRICS = True
 FIXED_MODE_SECONDS = 90
 DEFAULT_UNIQUE_SOURCES = False
+GRANULARITY_HOST = "0.0.0.0"
+GRANULARITY_PORT = 9010
+GRANULARITY_TOKEN = "START"
+GRANULARITY_WAIT_TIMEOUT = 180
 
 # Destination — unknown dst MAC forces every packet to hit the controller
 DST_MAC = "ff:ff:ff:ff:ff:ff"
@@ -92,28 +96,6 @@ def parse_args():
         "--granularity",
         action="store_true",
         help="Wait for trust_test.py handshake before starting saturation",
-    )
-    parser.add_argument(
-        "--granularity-host",
-        default="0.0.0.0",
-        help="Host/IP to listen on for granularity handshake",
-    )
-    parser.add_argument(
-        "--granularity-port",
-        type=int,
-        default=9010,
-        help="TCP port to listen on for granularity handshake",
-    )
-    parser.add_argument(
-        "--granularity-token",
-        default="START",
-        help="Expected start token from trust_test.py",
-    )
-    parser.add_argument(
-        "--granularity-wait-timeout",
-        type=int,
-        default=180,
-        help="Max wait time in seconds for granularity handshake",
     )
     parser.add_argument(
         "--unique-sources",
@@ -361,13 +343,6 @@ def prepare_controller(skip_reset_controller):
 def main():
     args = parse_args()
 
-    if args.granularity_port < 1 or args.granularity_port > 65535:
-        print("ERROR: --granularity-port must be in range 1..65535.")
-        sys.exit(2)
-    if args.granularity_wait_timeout <= 0:
-        print("ERROR: --granularity-wait-timeout must be > 0.")
-        sys.exit(2)
-
     if args.pps < 0:
         print("ERROR: --pps must be >= 0.")
         sys.exit(2)
@@ -389,10 +364,10 @@ def main():
             print("ERROR: --granularity requires fixed-rate mode: provide --pps N")
             sys.exit(2)
         started = wait_for_granularity_start(
-            args.granularity_host,
-            args.granularity_port,
-            args.granularity_token,
-            args.granularity_wait_timeout,
+            GRANULARITY_HOST,
+            GRANULARITY_PORT,
+            GRANULARITY_TOKEN,
+            GRANULARITY_WAIT_TIMEOUT,
         )
         if not started:
             print("ERROR: Timed out waiting for granularity start signal.")
