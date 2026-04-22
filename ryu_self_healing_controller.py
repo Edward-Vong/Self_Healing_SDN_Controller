@@ -7,7 +7,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER, set_ev_cls
 from ryu.lib.packet import packet, ethernet, ether_types, ipv4
 from ryu.ofproto import ofproto_v1_3
-from ryu.app.wsgi import ControllerBase, WSGIApplication, route
+from ryu.app.wsgi import WSGIApplication
 
 from config import (
     INSTANCE_NAME,
@@ -20,7 +20,6 @@ from config import (
     LEARNING_PRIORITY,
     ATTACK_METER_RATE,
     ESCALATION_THRESHOLD_SECONDS,
-    RECOVERY_WINDOW_SECONDS,
 )
 
 from rest_controller import RestController
@@ -29,15 +28,7 @@ from mitigation_manager import MitigationManager
 from recovery_manager import RecoveryManager
 
 class SelfHealingSDNController(app_manager.RyuApp):
-    """
-    A simple OpenFlow 1.3 learning switch with custom REST API endpoints.
-
-    Main features:
-    - Learns MAC-to-port mappings like a normal L2 switch
-    - Installs flow entries after learning destinations
-    - Tracks Packet-In events for monitoring
-    - Exposes controller and topology information through REST
-    """
+    """OpenFlow 1.3 learning switch with trust-aware mitigation controls."""
     #print("debugging: in ryu app\n")
     # Use OpenFlow 1.3 for this controller
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -45,6 +36,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
     _CONTEXTS = {
         "wsgi": WSGIApplication
     }
+
+    # ------------------------------------------------------------------
+    # Lifecycle / Initialization
+    # ------------------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
         super(SelfHealingSDNController, self).__init__(*args, **kwargs)
@@ -87,6 +82,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # Mitigation state
         self.mitigation_enabled = MITIGATION_ENABLED
         self.manual_mitigation = False
+        self.mitigation_start_time = None
 
         # Source tracking for trust
         self.source_packet_counts = defaultdict(int)
@@ -96,6 +92,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.trusted_sources = set()
         self.trust_threshold = TRUST_THRESHOLD
         self.mitigated_sources = defaultdict(int)  # Track mitigated packet count per source
+        self._trust_watch_events = {}
+        self._trust_watch_start_times = {}
 
         # Initialize managers
         self.attack_state = AttackState(self.logger)
@@ -105,7 +103,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.logger.info("self healing sdn api app started")
 
     def reset_counters(self):
-        """Reset controller counters"""
+        """Reset runtime counters and transient mitigation/trust state."""
         self.start_time = time.time()
         self.packet_in_count = 0
         self.packet_in_events.clear()
@@ -120,13 +118,19 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # reset trust evaluation stats
         self.source_seen_counts.clear()
         self.trusted_sources.clear()
+        self._trust_watch_events.clear()
+        self._trust_watch_start_times.clear()
 
         # reset managers
         self.attack_state.clear_all()
         self.recovery_manager.reset()
 
+    # ------------------------------------------------------------------
+    # Stats / Monitoring
+    # ------------------------------------------------------------------
+
     def get_mitigation_summary(self):
-        """Return mitigation and recovery status"""
+        """Return a compact snapshot of mitigation, trust, and recovery state."""
         rate_limited = {}
         escalated = {}
         for dpid in self.datapaths.keys():
@@ -152,20 +156,20 @@ class SelfHealingSDNController(app_manager.RyuApp):
         }
     
     def _cleanup_old_packets_in_events(self, window_seconds=WINDOW_SECONDS):
-        """ Keep only recent PI timestamps inside the rolling time window (default=10 secs) """    
+        """Drop Packet-In timestamps older than the rolling window."""
         
         now = time.time()
         while self.packet_in_events and (now - self.packet_in_events[0] > window_seconds):
             self.packet_in_events.popleft()
              
     def _packet_in_rate(self, window_seconds=WINDOW_SECONDS):
-        """ Keep PI rate over the last window_seconds """     
+        """Compute Packet-In rate for the rolling window."""
         
         self._cleanup_old_packets_in_events(window_seconds=window_seconds)
         return len(self.packet_in_events) / float(window_seconds)
     
     def _update_attack_status(self):
-        """Update attack detection status based on PI rate"""
+        """Refresh attack state, recovery progression, and escalation checks."""
         
         if self.manual_mitigation:
             self.attack_detected = True
@@ -188,10 +192,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         
         # Tick recovery if enabled
         if self.recovery_manager.is_recovering():
-            recovery_complete = self.recovery_manager.recovery_tick(self.datapaths)
-            if recovery_complete:
-                # Full recovery, prepare for learning again
-                pass
+            self.recovery_manager.recovery_tick(self.datapaths)
         
         # Check escalation during active mitigation
         if self.mitigation_active():
@@ -201,6 +202,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             )
 
     def set_mitigation_enabled(self, enabled):
+        """Enable or disable mitigation globally."""
         self.mitigation_enabled = bool(enabled)
         if not self.mitigation_enabled:
             self.manual_mitigation = False
@@ -232,7 +234,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         return round(self._cpu_percent, 2)
             
     def get_stats(self):
-        """Returns controller-level stats"""
+        """Return top-level controller stats used by REST clients/tests."""
         
         uptime = time.time() - self.start_time
         packet_in_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
@@ -256,43 +258,37 @@ class SelfHealingSDNController(app_manager.RyuApp):
         }
         
     def get_switches(self):
-        """ Return a list of connected switches
-        """
-        switches = []
-        for dpid, dp in self.datapaths.items():
-            switches.append({
-                "dpid": dpid
-            })
-        return switches
+        """Return connected switch IDs."""
+        return [{"dpid": dpid} for dpid in self.datapaths.keys()]
     
     def get_hosts(self):
-        """ Return a list of learned hosts
-        """
-        hosts = []
-        for mac, info in self.hosts.items():
-            hosts.append({
+        """Return learned host entries."""
+        return [
+            {
                 "mac": mac,
                 "ip": info.get("ip"),
                 "dpid": info.get("dpid"),
                 "port": info.get("port"),
                 "last_seen": round(info.get("last_seen", 0), 2)
-            })
-        return hosts
+            }
+            for mac, info in self.hosts.items()
+        ]
 
     def get_flows_summary(self):
-        """ Return a simple flow summary from learned MAC tables.
-        This is not a true switch flow dump; it is a summary of what the
-        learning switch knows and has likely installed.
-        """
-        flows = []
-        for dpid, mac_table in self.mac_to_port.items():
-            for mac, port in mac_table.items():
-                flows.append({
-                    "dpid": dpid,
-                    "match_dst_mac": mac,
-                    "output_port": port
-                })
-        return flows
+        """Return learned forwarding intents from the MAC table view."""
+        return [
+            {
+                "dpid": dpid,
+                "match_dst_mac": mac,
+                "output_port": port,
+            }
+            for dpid, mac_table in self.mac_to_port.items()
+            for mac, port in mac_table.items()
+        ]
+
+    # ------------------------------------------------------------------
+    # OpenFlow Event Handlers
+    # ------------------------------------------------------------------
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -309,35 +305,24 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.logger.info("Installed table-miss flow on switch %s", datapath.id)
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
-        # Build and send a flow mod message to the switch
+        """Install a flow entry on a switch datapath."""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        kwargs = {
+            "datapath": datapath,
+            "priority": priority,
+            "match": match,
+            "instructions": inst,
+        }
         if buffer_id is not None:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                buffer_id=buffer_id,
-                priority=priority, 
-                match=match, 
-                instructions=inst
-                )
-        else:
-            mod = parser.OFPFlowMod(
-                datapath=datapath, 
-                priority=priority,
-                match=match, 
-                instructions=inst
-                )
+            kwargs["buffer_id"] = buffer_id
+        mod = parser.OFPFlowMod(**kwargs)
         datapath.send_msg(mod)
 
     @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, CONFIG_DISPATCHER, DEAD_DISPATCHER])
     def state_change_handler(self, ev):
-        """ Keep track of connected datapaths
-
-        Args:
-            self (_type_): controller
-            ev (_type_): event
-        """
+        """Track datapath connect/disconnect events."""
         datapath = ev.datapath
         if datapath is None:
             return
@@ -349,6 +334,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             self.datapaths[datapath.id] = datapath
     
     def update_source_rate(self, src):
+        """Track per-source Packet-In volume for the current time window."""
         now = time.time()
 
         # reset every WINDOW_SECONDS
@@ -359,11 +345,17 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.source_packet_counts[src] += 1
 
     def update_packet_in_stats(self):
+        """Record a Packet-In event and refresh attack status."""
         self.packet_in_count += 1 # "packet in" count increase
         self.packet_in_events.append(time.time())   # update event list with this event's timestamp
         self._update_attack_status()
 
+    # ------------------------------------------------------------------
+    # Mitigation / Trust Management
+    # ------------------------------------------------------------------
+
     def mitigation_active(self):
+        """True when mitigation is enabled and currently engaged."""
         return self.mitigation_enabled and (self.manual_mitigation or self.attack_detected)
 
     def _drop_overrate_source(self, src, src_ip, dpid, in_port):
@@ -382,22 +374,18 @@ class SelfHealingSDNController(app_manager.RyuApp):
         )
         return True
 
-    def should_drop_packet(self, src, src_ip, source_trusted):
-        """Check if over-rate trusted source should be dropped"""
-        if not self.mitigation_active():
-            return False
-
-        # Drop trusted sources that exceed rate threshold
-        if source_trusted and self.source_packet_counts[src] > self.source_rate_threshold:
-            return True
-
-        return False
+    def should_drop_packet(self, src, source_trusted):
+        """Return True when a trusted source exceeds allowed source rate."""
+        return (
+            self.mitigation_active()
+            and source_trusted
+            and self.source_packet_counts[src] > self.source_rate_threshold
+        )
     
     def parse_packet_content(self, msg):
+        """Extract normalized packet context used by pipeline handlers."""
         datapath = msg.datapath
         dpid = datapath.id
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
         in_port = msg.match['in_port']
 
         pkt = packet.Packet(msg.data)
@@ -409,10 +397,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         return {
             "datapath": datapath,
             "dpid": dpid,
-            "ofproto": ofproto,
-            "parser": parser,
             "in_port": in_port,
-            "pkt": pkt,
             "eth": eth,
             "src": eth.src,
             "dst": eth.dst,
@@ -420,7 +405,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         }
     
     def learn_host(self, src, src_ip, dpid, in_port):
-        # Record host location
+        """Update host and MAC learning tables from source observation."""
         self.hosts[src] = {
             "ip": src_ip,
             "dpid": dpid,
@@ -432,6 +417,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.mac_to_port[dpid][src] = in_port
 
     def update_source_trust(self, src):
+        """Increment trust evidence for a source when outside attack mode."""
         if not self.mitigation_enabled:
             return
 
@@ -443,14 +429,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         if self.source_seen_counts[src] >= self.trust_threshold:
             self.trusted_sources.add(src)
-            # Notify any threads waiting for this source
-            if not hasattr(self, '_trust_watch_events'):
-                self._trust_watch_events = {}
             if src in self._trust_watch_events:
                 self._trust_watch_events[src].set()
 
     def get_trust_state(self):
-        """Return current trust table state"""
+        """Return trust-table state for REST inspection."""
         return {
             "trusted_sources": list(self.trusted_sources),
             "source_seen_counts": dict(self.source_seen_counts),
@@ -459,7 +442,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         }
 
     def clear_trust_state(self):
-        """Clear trust table and counters for clean runs"""
+        """Clear trust-related counters for clean test setup."""
         self.trusted_sources.clear()
         self.source_seen_counts.clear()
         self.source_packet_counts.clear()
@@ -470,15 +453,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         }
 
     def wait_for_trust(self, src_mac, timeout_sec=60):
-        """
-        Block until source_mac appears in trusted_sources or timeout expires.
-        Returns {"status": "trusted", "time_to_trust": N} or {"status": "timeout"}
-        """
-        if not hasattr(self, '_trust_watch_events'):
-            self._trust_watch_events = {}
-        if not hasattr(self, '_trust_watch_start_times'):
-            self._trust_watch_start_times = {}
-
+        """Block until a source becomes trusted or timeout expires."""
         # If already trusted, return immediately
         if src_mac in self.trusted_sources:
             return {"status": "trusted", "time_to_trust": 0}
@@ -502,7 +477,82 @@ class SelfHealingSDNController(app_manager.RyuApp):
         else:
             return {"status": "timeout", "timeout_sec": timeout_sec}
 
+    def _send_packet_out(self, datapath, msg, in_port, actions):
+        """Emit a PacketOut while preserving switch buffer usage."""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        data = None if msg.buffer_id != ofproto.OFP_NO_BUFFER else msg.data
+        out = parser.OFPPacketOut(
+            datapath=datapath,
+            buffer_id=msg.buffer_id,
+            in_port=in_port,
+            actions=actions,
+            data=data,
+        )
+        datapath.send_msg(out)
+
+    def _install_learning_flow(self, datapath, msg, in_port, src, dst, actions):
+        """Install a learned forwarding flow; return True if buffer consumed."""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+
+        if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            self.add_flow(datapath, LEARNING_PRIORITY, match, actions, buffer_id=msg.buffer_id)
+            return True
+
+        self.add_flow(datapath, LEARNING_PRIORITY, match, actions)
+        return False
+
+    def _handle_mitigation_packet(self, datapath, dpid, in_port, src, src_ip, dst, msg):
+        """Process a packet while mitigation is active."""
+        source_trusted = src in self.trusted_sources
+
+        if not source_trusted:
+            self.attack_state.mark_attack_on_port(dpid, in_port)
+            if in_port not in self.attack_state.get_rate_limited_ports(dpid):
+                self.mitigation_manager.install_meter_on_port(datapath, in_port)
+            self.mitigated_sources[src] += 1
+            return
+
+        if self.should_drop_packet(src, source_trusted):
+            self._drop_overrate_source(src, src_ip, dpid, in_port)
+            return
+
+        # Trusted source within rate: forward only if destination is known.
+        self._forward_if_known(datapath, dpid, dst, msg, in_port)
+
+    def _handle_normal_packet(self, datapath, dpid, in_port, src, src_ip, dst, msg):
+        """Process a packet under normal learning-switch behavior."""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        self.learn_host(src, src_ip, dpid, in_port)
+        out_port = self.mac_to_port[dpid].get(dst, ofproto.OFPP_FLOOD)
+        actions = [parser.OFPActionOutput(out_port)]
+
+        if out_port != ofproto.OFPP_FLOOD:
+            consumed = self._install_learning_flow(datapath, msg, in_port, src, dst, actions)
+            if consumed:
+                return
+
+        self._send_packet_out(datapath, msg, in_port, actions)
+
+    def _forward_if_known(self, datapath, dpid, dst, msg, in_port):
+        """Forward packet only when destination is already learned."""
+        parser = datapath.ofproto_parser
+        if dst not in self.mac_to_port[dpid]:
+            return False
+        out_port = self.mac_to_port[dpid][dst]
+        self._send_packet_out(datapath, msg, in_port, [parser.OFPActionOutput(out_port)])
+        return True
+
+    # ------------------------------------------------------------------
+    # Mitigation Control Actions
+    # ------------------------------------------------------------------
+
     def start_mitigation(self):
+        """Force mitigation mode on through REST control."""
         if not self.mitigation_enabled:
             return {
                 "result": "error",
@@ -522,6 +572,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         }
 
     def end_mitigation(self):
+        """Force mitigation mode off through REST control."""
         self.manual_mitigation = False
         self.attack_detected = False
         self.mitigation_start_time = None
@@ -535,7 +586,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "trusted_sources": list(self.trusted_sources),
         }
     
-    # remove flows for a compromised source across all switches in the topology
     def remove_source_flows(self, src):
         """Remove forwarding flows for a compromised trusted source on every switch."""
         src_ip = self.hosts.get(src, {}).get("ip")
@@ -565,6 +615,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
             src, src_ip, len(self.datapaths)
         )
 
+    # ------------------------------------------------------------------
+    # Packet-In Pipeline
+    # ------------------------------------------------------------------
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         """
@@ -592,8 +646,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
     def _process_packet(self, ctx, msg):
         datapath = ctx["datapath"]
         dpid = ctx["dpid"]
-        ofproto = ctx["ofproto"]
-        parser = ctx["parser"]
         in_port = ctx["in_port"]
         eth = ctx["eth"]
         src = ctx["src"]
@@ -607,85 +659,9 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.update_source_rate(src)
         self.update_source_trust(src)
 
-        source_trusted = src in self.trusted_sources
-
         # During attack: install meter on unknown source port or drop over-rate trusted sources
         if self.mitigation_active():
-            # If unknown source, install meter on ingress port
-            if not source_trusted:
-                self.attack_state.mark_attack_on_port(dpid, in_port)
-                if in_port not in self.attack_state.get_rate_limited_ports(dpid):
-                    self.mitigation_manager.install_meter_on_port(datapath, in_port)
-                self.mitigated_sources[src] += 1
-                return
-            
-            # If trusted but over-rate, drop it
-            if self.should_drop_packet(src, src_ip, source_trusted):
-                self._drop_overrate_source(src, src_ip, dpid, in_port)
-                return
-            
-            # Trusted source within rate: forward to known destinations only
-            if dst in self.mac_to_port[dpid]:
-                out_port = self.mac_to_port[dpid][dst]
-                actions = [parser.OFPActionOutput(out_port)]
-                data = None
-                if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-                    data = msg.data
-                out = parser.OFPPacketOut(
-                    datapath=datapath,
-                    buffer_id=msg.buffer_id,
-                    in_port=in_port,
-                    actions=actions,
-                    data=data
-                )
-                datapath.send_msg(out)
+            self._handle_mitigation_packet(datapath, dpid, in_port, src, src_ip, dst, msg)
             return
 
-        # Normal operation: learn and forward
-        self.learn_host(src, src_ip, dpid, in_port)
-
-        # if destination MAC is known, send to that port, otherwise flood
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-
-        actions = [parser.OFPActionOutput(out_port)]
-
-        # install a forwarding rule for learned hosts to avoid future controller hops
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(
-                in_port=in_port,
-                eth_dst=dst,
-                eth_src=src
-            )
-
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(
-                    datapath=datapath,
-                    priority=LEARNING_PRIORITY,
-                    match=match,
-                    actions=actions,
-                    buffer_id=msg.buffer_id
-                )
-                return
-            else:
-                self.add_flow(
-                    datapath=datapath,
-                    priority=LEARNING_PRIORITY,
-                    match=match,
-                    actions=actions
-                )
-
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=msg.buffer_id,
-            in_port=in_port,
-            actions=actions,
-            data=data
-        )
-        datapath.send_msg(out)
+        self._handle_normal_packet(datapath, dpid, in_port, src, src_ip, dst, msg)
