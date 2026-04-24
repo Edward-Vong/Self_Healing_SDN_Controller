@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """
-Baseline test — Normal traffic behavior for the Self-Healing SDN Controller.
+Simplified baseline test for normal controller behavior.
 
-Simulates legitimate client traffic using a fixed set of source MAC/IP
-addresses so the controller learns host locations and installs forwarding
-flows under normal conditions.
-
-This produces the "Test 1: Normal traffic baseline" data for the report.
-
-Run on node-0:
-  sudo python3 baseline_test.py
+Flow:
+1) Ensure controller is reachable and mitigation is enabled.
+2) Reset controller state.
+3) For each PPS step, run benign hping3 UDP traffic for a fixed window.
+4) Sample packet-in rate, CPU, false-positive state, and mitigation drop signals.
 """
 
 import os
-import random
+import subprocess
 import sys
-import time
 import threading
-
-from scapy.all import Ether, IP, UDP, sendp, conf
+import time
 
 try:
     from test_suite.test_common import (
+        get_attack_metrics as common_get_attack_metrics,
         get_stats as common_get_stats,
         parse_cpu_percent as common_parse_cpu_percent,
         reset_controller as common_reset_controller,
@@ -29,45 +25,32 @@ try:
     )
 except ModuleNotFoundError:
     from test_common import (
+        get_attack_metrics as common_get_attack_metrics,
         get_stats as common_get_stats,
         parse_cpu_percent as common_parse_cpu_percent,
         reset_controller as common_reset_controller,
         set_mitigation_enabled as common_set_mitigation_enabled,
     )
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-IFACE          = "eth1"
+
+IFACE = "eth1"
 CONTROLLER_API = "http://128.110.223.3:8080"
-
-# Fixed legitimate hosts — stable MACs/IPs the controller will learn and trust.
-# Once a forwarding flow is installed for each source, subsequent packets
-# bypass the controller, so steady-state PI rate approaches zero.
-LEGITIMATE_HOSTS = [
-    {"mac": "02:00:00:00:00:01", "ip": "10.1.0.1"},
-    {"mac": "02:00:00:00:00:02", "ip": "10.1.0.2"},
-    {"mac": "02:00:00:00:00:03", "ip": "10.1.0.3"},
-    {"mac": "02:00:00:00:00:04", "ip": "10.1.0.4"},
-    {"mac": "02:00:00:00:00:05", "ip": "10.1.0.5"},
-]
-
-DST_MAC = "ff:ff:ff:ff:ff:ff"  # Flood destination; controller learns on first hit
-DST_IP  = "10.0.0.1"
-
-# Traffic ramp — total PPS across all legitimate sources combined
-RAMP_STEPS    = [10, 50, 100]
-STEP_DURATION = 30    # seconds per step; long enough for flows to install and settle
-POLL_INTERVAL = 2     # seconds between REST polls
-CPU_STAT_KEY  = "controller_cpu_percent"
-
-# Warm-up packets sent per host before timed measurement begins.
-TRUST_SEED_PACKETS = 10
-# ---------------------------------------------------------------------------
+DST_IP = "10.0.0.1"
+CPU_STAT_KEY = "controller_cpu_percent"
+RAMP_STEPS = [10, 50, 100]
+STEP_DURATION = 30
+POLL_INTERVAL = 2
+HPING3_BIN = "hping3"
+HPING3_DPORT = 9999
+HPING3_DLEN = 64
 
 
 def get_stats():
     return common_get_stats(CONTROLLER_API)
+
+
+def get_attack_metrics():
+    return common_get_attack_metrics(CONTROLLER_API)
 
 
 def parse_cpu_percent(stats):
@@ -82,110 +65,130 @@ def ensure_mitigation_enabled():
     return common_set_mitigation_enabled(CONTROLLER_API, True)
 
 
-def make_legit_packet(src_mac, src_ip):
-    return (
-        Ether(src=src_mac, dst=DST_MAC) /
-        IP(src=src_ip, dst=DST_IP, ttl=64) /
-        UDP(sport=random.randint(1024, 65535), dport=9999)
-    )
+def _hping3_interval_arg(pps):
+    # hping3 non-flood mode uses interval syntax: -i u<micros>
+    micros = max(1, int(round(1000000.0 / float(max(1, pps)))))
+    return f"u{micros}"
 
 
-def seed_trust():
-    """Send warm-up packets from each host before timed measurement."""
-    print(f"  Warm-up: {TRUST_SEED_PACKETS} packets x {len(LEGITIMATE_HOSTS)} hosts ...")
-    for host in LEGITIMATE_HOSTS:
-        pkts = [make_legit_packet(host["mac"], host["ip"]) for _ in range(TRUST_SEED_PACKETS)]
-        sendp(pkts, iface=IFACE, verbose=False)
-    # Give the controller time to process warm-up traffic
-    time.sleep(3)
+def run_hping3_rate(pps, stop_event):
+    cmd = [
+        HPING3_BIN,
+        "--udp",
+        "-p",
+        str(HPING3_DPORT),
+        "-d",
+        str(HPING3_DLEN),
+        "-i",
+        _hping3_interval_arg(pps),
+        "--interface",
+        IFACE,
+        DST_IP,
+    ]
 
+    print(f"    hping3 cmd: {' '.join(cmd)}")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        print(f"ERROR: '{HPING3_BIN}' not found. Install hping3 and retry.")
+        stop_event.wait()
+        return
 
-def legit_flood(target_pps, stop_event):
-    """Send legitimate traffic round-robin across all hosts at target_pps total."""
-    host_count = len(LEGITIMATE_HOSTS)
-    interval = 1.0 / target_pps
-    idx = 0
-    next_send = time.perf_counter()
-
-    while not stop_event.is_set():
-        host = LEGITIMATE_HOSTS[idx % host_count]
-        pkt = make_legit_packet(host["mac"], host["ip"])
-        sendp(pkt, iface=IFACE, verbose=False)
-        idx += 1
-
-        next_send += interval
-        sleep_for = next_send - time.perf_counter()
-        if sleep_for > 0:
-            time.sleep(sleep_for)
-        else:
-            next_send = time.perf_counter()
+    stop_event.wait()
+    proc.terminate()
+    try:
+        proc.communicate(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
 
 
 def run_step(target_pps):
-    """
-    Send legitimate traffic at target_pps for STEP_DURATION seconds.
-    Returns (avg_pi_rate, peak_pi_rate, avg_cpu, peak_cpu,
-             false_positive, final_known_hosts).
-    """
     stop_event = threading.Event()
-    flood_thread = threading.Thread(
-        target=legit_flood, args=(target_pps, stop_event), daemon=True
-    )
-    flood_thread.start()
+    sender = threading.Thread(target=run_hping3_rate, args=(target_pps, stop_event), daemon=True)
+    sender.start()
 
     rates = []
     cpu_rates = []
     false_positive = False
     known_hosts = 0
-    step_start = time.time()
+    saw_rate_limited = False
+    saw_escalated = False
+    start = time.time()
 
-    while time.time() - step_start < STEP_DURATION:
-        stats = get_stats()
-        if stats:
-            rate   = stats.get("packet_in_rate", 0)
-            cpu    = parse_cpu_percent(stats)
-            attack = stats.get("attack_detected", False)
-            known_hosts = stats.get("known_hosts", 0)
+    while time.time() - start < STEP_DURATION:
+        stats = get_stats() or {}
+        metrics = get_attack_metrics() or {}
 
-            rates.append(rate)
-            if cpu is not None:
-                cpu_rates.append(cpu)
+        rate = stats.get("packet_in_rate", 0)
+        cpu = parse_cpu_percent(stats)
+        attack = bool(stats.get("attack_detected", False))
+        known_hosts = stats.get("known_hosts", 0)
 
-            if attack:
-                false_positive = True
-                print(f"    target={target_pps} pps  pi_rate={rate}/s  cpu={cpu}%  "
-                      f"known_hosts={known_hosts}  [!! FALSE POSITIVE]")
-            else:
-                print(f"    target={target_pps} pps  pi_rate={rate}/s  cpu={cpu}%  "
-                      f"known_hosts={known_hosts}")
+        mitigation = metrics.get("mitigation", {}) if isinstance(metrics, dict) else {}
+        rl_map = mitigation.get("rate_limited_ports", {}) if isinstance(mitigation, dict) else {}
+        esc_map = mitigation.get("escalated_ports", {}) if isinstance(mitigation, dict) else {}
+        rl_count = sum(len(v) for v in rl_map.values() if isinstance(v, list))
+        esc_count = sum(len(v) for v in esc_map.values() if isinstance(v, list))
+
+        saw_rate_limited = saw_rate_limited or rl_count > 0
+        saw_escalated = saw_escalated or esc_count > 0
+
+        rates.append(rate)
+        if cpu is not None:
+            cpu_rates.append(cpu)
+
+        if attack:
+            false_positive = True
+            print(
+                f"    target={target_pps} pps  pi_rate={rate}/s  cpu={cpu}%  "
+                f"known_hosts={known_hosts}  rl_ports={rl_count}  esc_ports={esc_count}  "
+                "[!! FALSE POSITIVE]"
+            )
+        else:
+            print(
+                f"    target={target_pps} pps  pi_rate={rate}/s  cpu={cpu}%  "
+                f"known_hosts={known_hosts}  rl_ports={rl_count}  esc_ports={esc_count}"
+            )
 
         time.sleep(POLL_INTERVAL)
 
     stop_event.set()
-    flood_thread.join(timeout=3)
+    sender.join(timeout=3)
 
-    avg_pi   = round(sum(rates) / len(rates), 2) if rates else 0
-    peak_pi  = round(max(rates), 2)              if rates else 0
-    avg_cpu  = round(sum(cpu_rates) / len(cpu_rates), 2) if cpu_rates else None
-    peak_cpu = round(max(cpu_rates), 2)                  if cpu_rates else None
+    avg_pi = round(sum(rates) / len(rates), 2) if rates else 0
+    peak_pi = round(max(rates), 2) if rates else 0
+    avg_cpu = round(sum(cpu_rates) / len(cpu_rates), 2) if cpu_rates else None
+    peak_cpu = round(max(cpu_rates), 2) if cpu_rates else None
 
-    return avg_pi, peak_pi, avg_cpu, peak_cpu, false_positive, known_hosts
+    return {
+        "target_pps": target_pps,
+        "avg_pi_rate": avg_pi,
+        "peak_pi_rate": peak_pi,
+        "avg_cpu_percent": avg_cpu,
+        "peak_cpu_percent": peak_cpu,
+        "known_hosts": known_hosts,
+        "false_positive": false_positive,
+        "saw_rate_limited": saw_rate_limited,
+        "saw_escalated": saw_escalated,
+    }
 
 
 def main():
     if hasattr(os, "geteuid") and os.geteuid() != 0:
-        print("ERROR: Scapy sendp() requires raw-socket privileges.")
-        print("       Run with: sudo python3.8 ./test_suite/baseline_test.py")
+        print("ERROR: hping3 requires raw-socket privileges.")
+        print("       Run with: sudo python3 ./test_suite/baseline_test.py")
         sys.exit(1)
 
-    conf.iface = IFACE
-
-    print(f"Interface        : {IFACE}")
-    print(f"Controller API   : {CONTROLLER_API}")
-    print(f"Traffic steps    : {RAMP_STEPS} pps")
-    print(f"Step duration    : {STEP_DURATION}s")
-    print(f"Legitimate hosts : {len(LEGITIMATE_HOSTS)} fixed MAC/IP sources")
-    print(f"Mitigation       : ENABLED (confirming no false positives under normal load)")
+    print(f"Interface      : {IFACE}")
+    print(f"Controller API : {CONTROLLER_API}")
+    print(f"Traffic steps  : {RAMP_STEPS} pps")
+    print(f"Step duration  : {STEP_DURATION}s")
+    print("Backend        : hping3 UDP fixed-rate")
     print()
 
     stats = get_stats()
@@ -194,64 +197,58 @@ def main():
         sys.exit(1)
 
     if not stats.get("mitigation_enabled", True):
-        print("  Mitigation was disabled — re-enabling for baseline test ...")
+        print("Mitigation is disabled; enabling it for baseline test...")
         if not ensure_mitigation_enabled():
             print("ERROR: Could not enable mitigation.")
             sys.exit(2)
 
-    print(f"Controller reachable — uptime={stats.get('uptime_seconds')}s  "
-          f"threshold={stats.get('packet_in_threshold')} PI/s")
-    print()
-
     if not reset_controller():
-        print("ERROR: Could not reset controller state — aborting.")
+        print("ERROR: Could not reset controller state.")
         sys.exit(3)
+
     time.sleep(1)
 
-    seed_trust()
-    print()
-
     rows = []
-    top_hdr = (f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Avg CPU%':>9}  {'Hosts':>6}")
-    top_sep = "-" * len(top_hdr)
-    print(top_hdr)
-    print(top_sep)
+    print(f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Avg CPU%':>9}  {'Hosts':>6}  {'Drops?':>8}")
+    print("-" * 60)
 
-    for target_pps in RAMP_STEPS:
-        print(f"\n  Step: {target_pps} pps ({STEP_DURATION}s window) ...")
-        avg_pi, peak_pi, avg_cpu, peak_cpu, false_pos, known_hosts = run_step(target_pps)
+    for pps in RAMP_STEPS:
+        print(f"\n  Step: {pps} pps ({STEP_DURATION}s window) ...")
+        row = run_step(pps)
+        rows.append(row)
 
-        avg_cpu_s  = f"{avg_cpu}%"  if avg_cpu  is not None else "n/a"
+        avg_cpu = row["avg_cpu_percent"]
+        peak_cpu = row["peak_cpu_percent"]
+        avg_cpu_s = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
         peak_cpu_s = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
-        attack_str = "YES [!]" if false_pos else "No"
+        attack_s = "YES [!]" if row["false_positive"] else "No"
+        drops_s = "YES" if (row["saw_rate_limited"] or row["saw_escalated"]) else "No"
 
-        print(f"  -> avg={avg_pi}/s  peak={peak_pi}/s  avg_cpu={avg_cpu_s}  "
-              f"peak_cpu={peak_cpu_s}  attack_triggered={attack_str}")
+        print(
+            f"  -> avg={row['avg_pi_rate']}/s  peak={row['peak_pi_rate']}/s  "
+            f"avg_cpu={avg_cpu_s}  peak_cpu={peak_cpu_s}  "
+            f"attack_triggered={attack_s}  drops={drops_s}"
+        )
 
-        rows.append({
-            "target_pps":       target_pps,
-            "avg_pi_rate":      avg_pi,
-            "peak_pi_rate":     peak_pi,
-            "avg_cpu_percent":  avg_cpu,
-            "peak_cpu_percent": peak_cpu,
-            "known_hosts":      known_hosts,
-            "false_positive":   false_pos,
-        })
+        time.sleep(2)
 
-        time.sleep(5)
+    header = (
+        f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Peak PI/s':>10}  "
+        f"{'Avg CPU%':>9}  {'Peak CPU%':>10}  {'Hosts':>6}  {'Drops?':>8}"
+    )
+    print("\n" + "=" * len(header))
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        avg_c = row["avg_cpu_percent"] if row["avg_cpu_percent"] is not None else "n/a"
+        peak_c = row["peak_cpu_percent"] if row["peak_cpu_percent"] is not None else "n/a"
+        drops = "YES" if (row["saw_rate_limited"] or row["saw_escalated"]) else "No"
+        print(
+            f"{row['target_pps']:>12}  {row['avg_pi_rate']:>10}  {row['peak_pi_rate']:>10}  "
+            f"{avg_c:>9}  {peak_c:>10}  {row['known_hosts']:>6}  {drops:>8}"
+        )
+    print("=" * len(header))
 
-    summary_hdr = (f"{'Target PPS':>12}  {'Avg PI/s':>10}  {'Peak PI/s':>10}  "
-                   f"{'Avg CPU%':>9}  {'Peak CPU%':>10}  {'Hosts':>6}")
-    summary_sep = "-" * len(summary_hdr)
-    print("\n" + "=" * len(summary_hdr))
-    print(summary_hdr)
-    print(summary_sep)
-    for r in rows:
-        avg_c  = r["avg_cpu_percent"]  if r["avg_cpu_percent"]  is not None else "n/a"
-        peak_c = r["peak_cpu_percent"] if r["peak_cpu_percent"] is not None else "n/a"
-        print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>10}  {r['peak_pi_rate']:>10}  "
-              f"{avg_c:>9}  {peak_c:>10}  {r['known_hosts']:>6}")
-    print("=" * len(summary_hdr))
 
 if __name__ == "__main__":
     main()

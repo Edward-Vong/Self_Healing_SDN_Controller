@@ -13,13 +13,12 @@ Modes:
 
 import argparse
 import os
-import random
+import re
 import socket
+import subprocess
 import sys
-import time
 import threading
-
-from scapy.all import Ether, IP, UDP, Raw, sendp, conf
+import time
 
 try:
     from test_suite.test_common import (
@@ -37,32 +36,34 @@ except ModuleNotFoundError:
     )
 
 # ---------------------------------------------------------------------------
-# Configuration — edit these to match your setup
+# Configuration - edit these to match your setup
 # ---------------------------------------------------------------------------
-IFACE          = "eth1"                    # data-plane interface facing OVS
+IFACE = "eth1"  # data-plane interface facing OVS
 CONTROLLER_API = "http://128.110.223.3:8080"  # Ryu REST API
 
 # Default stepped-mode ladder.
-RAMP_STEPS     = [50, 100, 250, 500, 1000, 2000, 5000, 10000]
-STEP_DURATION  = 10   # seconds rate must stay at target once reached
-STEP_TIMEOUT   = 30   # abort current/overall test if target not reached in this time
-RATE_TOLERANCE = 0.95 # consider target reached at >= target_pps * RATE_TOLERANCE
-POLL_INTERVAL  = 2    # seconds between REST polls within a step
-FLOOD_BURST_SIZE = 256 # packets per send call; larger bursts reduce Python overhead
-CPU_STAT_KEY   = "controller_cpu_percent"
+RAMP_STEPS = [50, 100, 250, 500, 1000, 2000, 5000, 10000]
+STEP_DURATION = 10  # seconds rate must stay at target once reached
+STEP_TIMEOUT = 30  # abort current/overall test if target not reached in this time
+RATE_TOLERANCE = 0.95  # consider target reached at >= target_pps * RATE_TOLERANCE
+POLL_INTERVAL = 2  # seconds between REST polls within a step
+CPU_STAT_KEY = "controller_cpu_percent"
 REQUIRE_CPU_METRICS = True
 FIXED_MODE_SECONDS = 90
-DEFAULT_UNIQUE_SOURCES = False
 GRANULARITY_HOST = "0.0.0.0"
 GRANULARITY_PORT = 9010
 GRANULARITY_TOKEN = "START"
 GRANULARITY_WAIT_TIMEOUT = 180
 
-# Destination — unknown dst MAC forces every packet to hit the controller
-DST_MAC = "ff:ff:ff:ff:ff:ff"
-DST_IP  = "10.0.0.1"
-TARGET_PACKET_BYTES = 256
-PAD_BYTE = b"X"
+# Destination IP used for hping3 flood.
+DST_IP = "10.0.0.1"
+
+# Delay measurement + hping3 settings
+DELAY_PROBE_HOST = CONTROLLER_API.split("://")[-1].split(":")[0]
+DELAY_PROBE_COUNT = 10
+DELAY_PROBE_TIMEOUT = 2
+DELAY_SAMPLE_INTERVAL = 15
+HPING3_BIN = "hping3"
 # ---------------------------------------------------------------------------
 
 
@@ -96,12 +97,6 @@ def parse_args():
         "--granularity",
         action="store_true",
         help="Wait for trust_test.py handshake before starting saturation",
-    )
-    parser.add_argument(
-        "--unique-sources",
-        action="store_true",
-        default=DEFAULT_UNIQUE_SOURCES,
-        help="Generate random source MAC/IP per packet (higher CPU cost on sender)",
     )
     parser.add_argument("--skip-reset-controller", action="store_true")
     return parser.parse_args()
@@ -145,72 +140,211 @@ def wait_for_granularity_start(host, port, token, timeout_sec):
     return False
 
 
-def make_packet(unique_sources=False):
-    """Build one attack packet. Randomized sources are optional for generator performance."""
-    if unique_sources:
-        src_mac = "02:%02x:%02x:%02x:%02x:%02x" % tuple(
-            random.randint(0, 255) for _ in range(5)
+# ---------------------------------------------------------------------------
+# RTT / delay measurement
+# ---------------------------------------------------------------------------
+
+def measure_rtt(host=None, count=DELAY_PROBE_COUNT, timeout_per_probe=DELAY_PROBE_TIMEOUT):
+    """
+    Measure ICMP round-trip time to host using the system ping command.
+    Returns a dict {min_ms, avg_ms, max_ms, loss_pct} or None on failure.
+    """
+    if host is None:
+        host = DELAY_PROBE_HOST
+    ping_cmd = ["ping", "-c", str(count), "-W", str(timeout_per_probe), host]
+    if os.name == "nt":
+        ping_cmd = ["ping", "-n", str(count), "-w", str(int(timeout_per_probe * 1000)), host]
+
+    try:
+        result = subprocess.run(
+            ping_cmd,
+            capture_output=True,
+            text=True,
+            timeout=count * (timeout_per_probe + 1) + 5,
         )
-        src_ip = "10.%d.%d.%d" % (
-            random.randint(1, 254),
-            random.randint(1, 254),
-            random.randint(1, 254),
+        output = result.stdout
+        m_rtt = re.search(
+            r"rtt min/avg/max/mdev = ([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+) ms", output
+        )
+        if not m_rtt:
+            # Windows ping summary format.
+            m_win = re.search(
+                r"Minimum\s*=\s*(\d+)ms,\s*Maximum\s*=\s*(\d+)ms,\s*Average\s*=\s*(\d+)ms",
+                output,
+            )
+            if m_win:
+                min_ms = float(m_win.group(1))
+                max_ms = float(m_win.group(2))
+                avg_ms = float(m_win.group(3))
+                m_loss = re.search(r"\((\d+)%\s*loss\)", output, flags=re.IGNORECASE)
+                return {
+                    "min_ms": round(min_ms, 3),
+                    "avg_ms": round(avg_ms, 3),
+                    "max_ms": round(max_ms, 3),
+                    "loss_pct": round(float(m_loss.group(1)), 1) if m_loss else 100.0,
+                }
+        m_loss = re.search(r"([\d.]+)% packet loss", output)
+        if m_rtt:
+            return {
+                "min_ms": round(float(m_rtt.group(1)), 3),
+                "avg_ms": round(float(m_rtt.group(2)), 3),
+                "max_ms": round(float(m_rtt.group(3)), 3),
+                "loss_pct": round(float(m_loss.group(1)), 1) if m_loss else 100.0,
+            }
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        print(f"  [RTT] measure_rtt failed: {exc}")
+        return None
+
+
+def _delay_sampler(host, interval, stop_event, results):
+    """Background thread: collect periodic RTT samples while flood is running."""
+    while not stop_event.is_set():
+        sample = measure_rtt(host, count=3, timeout_per_probe=1)
+        if sample is not None:
+            results.append(sample)
+        stop_event.wait(interval)
+
+
+def _aggregate_delay(samples):
+    if not samples:
+        return None
+    return {
+        "min_ms": round(min(s["min_ms"] for s in samples), 3),
+        "avg_ms": round(sum(s["avg_ms"] for s in samples) / len(samples), 3),
+        "max_ms": round(max(s["max_ms"] for s in samples), 3),
+        "loss_pct": round(sum(s["loss_pct"] for s in samples) / len(samples), 1),
+        "n_samples": len(samples),
+    }
+
+
+def _rtt_live_tag(delay_samples):
+    if not delay_samples:
+        return ""
+    return f"  rtt={delay_samples[-1]['avg_ms']}ms"
+
+
+def _rtt_delta_str(under_attack, baseline):
+    if not under_attack or not baseline:
+        return "n/a"
+    base = baseline.get("avg_ms")
+    atk = under_attack.get("avg_ms")
+    if base is None or atk is None or base <= 0:
+        return "n/a"
+    delta = ((atk - base) / base) * 100.0
+    return f"{delta:+.1f}%"
+
+
+def _print_delay_section(baseline, under_attack):
+    print("-" * 60)
+    print("Network Delay")
+    print("-" * 60)
+    if baseline:
+        print(
+            f"Baseline RTT    : avg={baseline['avg_ms']}ms  min={baseline['min_ms']}ms  "
+            f"max={baseline['max_ms']}ms  loss={baseline['loss_pct']}%"
         )
     else:
-        src_mac = "02:00:00:00:00:01"
-        src_ip = "10.1.0.1"
+        print("Baseline RTT    : measurement failed")
 
-    base = (
-        Ether(src=src_mac, dst=DST_MAC) /
-        IP(src=src_ip, dst=DST_IP, ttl=64) /
-        UDP(sport=random.randint(1024, 65535), dport=9999)
-    )
-    payload_len = max(0, TARGET_PACKET_BYTES - len(base))
-    return base / Raw(load=PAD_BYTE * payload_len)
+    if under_attack:
+        print(
+            f"Under-Attack RTT: avg={under_attack['avg_ms']}ms  min={under_attack['min_ms']}ms  "
+            f"max={under_attack['max_ms']}ms  loss={under_attack['loss_pct']}%"
+        )
+        print(
+            f"  (averaged over {under_attack['n_samples']} in-flight sample(s), "
+            f"1 sample every {DELAY_SAMPLE_INTERVAL}s)"
+        )
+    else:
+        print("Under-Attack RTT: no samples collected (flood too short or host unreachable?)")
 
-
-def flood(target_pps, stop_event, unique_sources=False):
-    """Continuously send packets as close to target_pps as possible."""
-    burst_size = max(1, FLOOD_BURST_SIZE)
-    burst_interval = burst_size / float(target_pps)
-    sent = 0
-    next_send = time.perf_counter()
-
-    prebuilt_burst = None
-    if not unique_sources:
-        prebuilt_burst = [make_packet(unique_sources=False) for _ in range(burst_size)]
-
-    while not stop_event.is_set():
-        if unique_sources:
-            packets = [make_packet(unique_sources=True) for _ in range(burst_size)]
-        else:
-            packets = prebuilt_burst
-        sendp(packets, iface=IFACE, verbose=False)
-        sent += burst_size
-
-        next_send += burst_interval
-        sleep_for = next_send - time.perf_counter()
-        if sleep_for > 0:
-            time.sleep(sleep_for)
-        else:
-            # If we fall behind at high PPS, resync to avoid runaway drift.
-            next_send = time.perf_counter()
-
-    return sent
+    if baseline and under_attack and baseline.get("avg_ms", 0) > 0:
+        degradation = ((under_attack["avg_ms"] - baseline["avg_ms"]) / baseline["avg_ms"]) * 100
+        print(f"Avg RTT change  : {degradation:+.1f}%")
 
 
-def run_step(target_pps, unique_sources=False):
+# ---------------------------------------------------------------------------
+# Flood backend
+# ---------------------------------------------------------------------------
+
+def flood_hping3(stop_event, dst_ip=DST_IP, iface=IFACE):
     """
-    Flood at target_pps until measured rate reaches the tolerated target and
-    remains there for STEP_DURATION seconds, or until STEP_TIMEOUT is exceeded.
-    Returns (avg_pi_rate, peak_pi_rate, avg_cpu, peak_cpu,
-             reached_target, time_to_reach, hold_time, required_rate).
+    Launch hping3 in UDP flood mode; terminate when stop_event fires.
+    Command:
+      hping3 --flood --udp -p 9999 -d 200 --rand-source --interface <iface> <dst_ip>
     """
+    cmd = [
+        HPING3_BIN,
+        "--flood",
+        "--udp",
+        "-p",
+        "9999",
+        "-d",
+        "200",
+        "--rand-source",
+        "--interface",
+        iface,
+        dst_ip,
+    ]
+
+    print(f"  [hping3] cmd: {' '.join(cmd)}")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        print(f"  [hping3] ERROR: '{HPING3_BIN}' not found. Install hping3 and retry.")
+        stop_event.wait()
+        return
+
+    stop_event.wait()
+    proc.terminate()
+    try:
+        _, stderr_bytes = proc.communicate(timeout=5)
+        if stderr_bytes:
+            for line in stderr_bytes.decode("utf-8", errors="ignore").strip().splitlines()[-3:]:
+                if line.strip():
+                    print(f"  [hping3] {line}")
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+
+
+def _start_flood_and_sampler():
     stop_event = threading.Event()
+    delay_samples = []
+
     flood_thread = threading.Thread(
-        target=flood, args=(target_pps, stop_event, unique_sources), daemon=True
+        target=flood_hping3,
+        args=(stop_event,),
+        daemon=True,
     )
+    sampler_thread = threading.Thread(
+        target=_delay_sampler,
+        args=(DELAY_PROBE_HOST, DELAY_SAMPLE_INTERVAL, stop_event, delay_samples),
+        daemon=True,
+    )
+
     flood_thread.start()
+    sampler_thread.start()
+    return stop_event, flood_thread, sampler_thread, delay_samples
+
+
+def _stop_flood_and_sampler(stop_event, flood_thread, sampler_thread):
+    stop_event.set()
+    flood_thread.join(timeout=3)
+    sampler_thread.join(timeout=DELAY_PROBE_COUNT * (DELAY_PROBE_TIMEOUT + 1) + 10)
+
+
+def run_step(target_pps, baseline_rtt):
+    """
+    Flood until measured packet_in rate reaches tolerated target and remains
+    there for STEP_DURATION seconds, or until STEP_TIMEOUT is exceeded.
+    """
+    stop_event, flood_thread, sampler_thread, delay_samples = _start_flood_and_sampler()
 
     rates = []
     cpu_rates = []
@@ -224,7 +358,6 @@ def run_step(target_pps, unique_sources=False):
     while True:
         now = time.time()
         elapsed = now - step_start
-
         if elapsed > STEP_TIMEOUT:
             break
 
@@ -233,20 +366,25 @@ def run_step(target_pps, unique_sources=False):
             rate = stats.get("packet_in_rate", 0)
             cpu = parse_cpu_percent(stats)
             rates.append(rate)
-            mitigation_on = stats.get("mitigation_active")
-            mit_tag = "  [MITIGATION ACTIVE]" if mitigation_on else ""
+            mit_tag = "  [MITIGATION ACTIVE]" if stats.get("mitigation_active") else ""
+            rtt_tag = _rtt_live_tag(delay_samples)
             if cpu is not None:
                 cpu_rates.append(cpu)
-                print(f"    target={target_pps} pps  measured pi_rate={rate}/s  cpu={cpu}%{mit_tag}")
+                print(
+                    f"    target={target_pps} pps  measured pi_rate={rate}/s  "
+                    f"cpu={cpu}%{rtt_tag}{mit_tag}"
+                )
             else:
-                print(f"    target={target_pps} pps  measured pi_rate={rate}/s{mit_tag}")
+                print(
+                    f"    target={target_pps} pps  measured pi_rate={rate}/s"
+                    f"{rtt_tag}{mit_tag}"
+                )
 
             if rate >= required_rate:
                 if stable_since is None:
                     stable_since = now
                     reached_target = True
                     time_to_reach = now - step_start
-
                 hold_time = now - stable_since
                 if hold_time >= STEP_DURATION:
                     break
@@ -256,25 +394,33 @@ def run_step(target_pps, unique_sources=False):
 
         time.sleep(POLL_INTERVAL)
 
-    stop_event.set()
-    flood_thread.join(timeout=3)
+    _stop_flood_and_sampler(stop_event, flood_thread, sampler_thread)
 
-    avg  = round(sum(rates) / len(rates), 2) if rates else 0
-    peak = round(max(rates), 2)             if rates else 0
+    avg_rate = round(sum(rates) / len(rates), 2) if rates else 0
+    peak_rate = round(max(rates), 2) if rates else 0
     avg_cpu = round(sum(cpu_rates) / len(cpu_rates), 2) if cpu_rates else None
     peak_cpu = round(max(cpu_rates), 2) if cpu_rates else None
-    return avg, peak, avg_cpu, peak_cpu, reached_target and hold_time >= STEP_DURATION, round(time_to_reach, 2) if time_to_reach is not None else None, round(hold_time, 2), round(required_rate, 2)
+
+    return {
+        "target_pps": target_pps,
+        "required_pi_rate": round(required_rate, 2),
+        "avg_pi_rate": avg_rate,
+        "peak_pi_rate": peak_rate,
+        "avg_cpu_percent": avg_cpu,
+        "peak_cpu_percent": peak_cpu,
+        "reached_and_held": reached_target and hold_time >= STEP_DURATION,
+        "time_to_reach_s": round(time_to_reach, 2) if time_to_reach is not None else None,
+        "hold_time_s": round(hold_time, 2),
+        "delay_baseline": baseline_rtt,
+        "delay_under_attack": _aggregate_delay(delay_samples),
+    }
 
 
-def run_fixed_rate(pps, run_seconds=FIXED_MODE_SECONDS, unique_sources=False):
-    """Run a fixed-rate flood and return aggregate stats for the window."""
-    stop_event = threading.Event()
-    flood_thread = threading.Thread(
-        target=flood,
-        args=(pps, stop_event, unique_sources),
-        daemon=True,
-    )
-    flood_thread.start()
+def run_fixed_rate(run_seconds, baseline_rtt):
+    """
+    Run flood for run_seconds and return aggregate stats for the window.
+    """
+    stop_event, flood_thread, sampler_thread, delay_samples = _start_flood_and_sampler()
 
     rates = []
     cpu_rates = []
@@ -286,21 +432,29 @@ def run_fixed_rate(pps, run_seconds=FIXED_MODE_SECONDS, unique_sources=False):
             rate = stats.get("packet_in_rate", 0)
             cpu = parse_cpu_percent(stats)
             rates.append(rate)
+            rtt_tag = _rtt_live_tag(delay_samples)
             if cpu is not None:
                 cpu_rates.append(cpu)
-                print(f"    fixed={pps} pps  measured pi_rate={rate}/s  cpu={cpu}%")
+                print(f"    flood=udp --flood  measured pi_rate={rate}/s  cpu={cpu}%{rtt_tag}")
             else:
-                print(f"    fixed={pps} pps  measured pi_rate={rate}/s")
+                print(f"    flood=udp --flood  measured pi_rate={rate}/s{rtt_tag}")
         time.sleep(POLL_INTERVAL)
 
-    stop_event.set()
-    flood_thread.join(timeout=3)
+    _stop_flood_and_sampler(stop_event, flood_thread, sampler_thread)
 
-    avg = round(sum(rates) / len(rates), 2) if rates else 0
-    peak = round(max(rates), 2) if rates else 0
+    avg_rate = round(sum(rates) / len(rates), 2) if rates else 0
+    peak_rate = round(max(rates), 2) if rates else 0
     avg_cpu = round(sum(cpu_rates) / len(cpu_rates), 2) if cpu_rates else None
     peak_cpu = round(max(cpu_rates), 2) if cpu_rates else None
-    return avg, peak, avg_cpu, peak_cpu
+
+    return {
+        "avg_pi_rate": avg_rate,
+        "peak_pi_rate": peak_rate,
+        "avg_cpu_percent": avg_cpu,
+        "peak_cpu_percent": peak_cpu,
+        "delay_baseline": baseline_rtt,
+        "delay_under_attack": _aggregate_delay(delay_samples),
+    }
 
 
 def prepare_controller(skip_reset_controller):
@@ -318,15 +472,15 @@ def prepare_controller(skip_reset_controller):
         print("       Restart the controller process that serves this API and rerun the test.")
         sys.exit(2)
 
-    print(f"Controller reachable — uptime={stats.get('uptime_seconds')}s")
+    print(f"Controller reachable - uptime={stats.get('uptime_seconds')}s")
     print()
 
     if not set_mitigation_enabled(False):
-        print("ERROR: Could not disable mitigation — aborting to avoid protection bias.")
+        print("ERROR: Could not disable mitigation - aborting to avoid protection bias.")
         sys.exit(3)
     if not skip_reset_controller:
         if not reset_controller():
-            print("ERROR: Could not reset controller state — aborting.")
+            print("ERROR: Could not reset controller state - aborting.")
             sys.exit(4)
     else:
         print("WARNING: Skipping controller reset; prior controller state is preserved.")
@@ -348,16 +502,28 @@ def main():
         sys.exit(2)
 
     if hasattr(os, "geteuid") and os.geteuid() != 0:
-        print("ERROR: Scapy sendp() requires raw-socket privileges.")
-        print("       Run with: sudo python3.8 ./test_suite/unprotected_saturation_test.py")
+        print("ERROR: hping3 requires raw-socket privileges.")
+        print("       Run with: sudo python3 ./test_suite/unprotected_saturation_test.py")
         sys.exit(1)
-
-    conf.iface = IFACE
 
     print(f"Interface      : {IFACE}")
     print(f"Controller API : {CONTROLLER_API}")
-    print(f"Unique sources : {args.unique_sources}")
+    print("Flood backend  : hping3 udp --flood --rand-source")
+
     prepare_controller(args.skip_reset_controller)
+
+    print(f"[Delay] Measuring baseline RTT to {DELAY_PROBE_HOST} ...")
+    baseline_rtt = measure_rtt()
+    if baseline_rtt:
+        print(
+            f"[Delay] Baseline: avg={baseline_rtt['avg_ms']}ms  "
+            f"min={baseline_rtt['min_ms']}ms  max={baseline_rtt['max_ms']}ms  "
+            f"loss={baseline_rtt['loss_pct']}%"
+        )
+    else:
+        print("[Delay] Baseline RTT measurement failed.")
+
+    print()
 
     if args.granularity:
         if args.pps <= 0:
@@ -376,30 +542,36 @@ def main():
 
     # Fixed-rate mode: --pps N
     if args.pps > 0:
-        print(f"Mode          : FIXED")
+        print("Mode          : FIXED")
         print(f"Requested PPS : {args.pps}")
         print(f"Duration      : {FIXED_MODE_SECONDS}s")
         print()
 
-        avg_rate, peak_rate, avg_cpu, peak_cpu = run_fixed_rate(
-            args.pps,
-            FIXED_MODE_SECONDS,
-            unique_sources=args.unique_sources,
-        )
+        try:
+            result = run_fixed_rate(
+                run_seconds=FIXED_MODE_SECONDS,
+                baseline_rtt=baseline_rtt,
+            )
+        finally:
+            set_mitigation_enabled(True)
+
+        avg_cpu = result["avg_cpu_percent"]
+        peak_cpu = result["peak_cpu_percent"]
         avg_cpu_str = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
         peak_cpu_str = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
 
         print("\n" + "=" * 60)
         print("Fixed-Rate Saturation Summary")
         print("-" * 60)
+        print("Flood backend : hping3 udp --flood --rand-source")
         print(f"Requested PPS : {args.pps}")
-        print(f"Avg PI/s      : {avg_rate}")
-        print(f"Peak PI/s     : {peak_rate}")
+        print(f"Avg PI/s      : {result['avg_pi_rate']}")
+        print(f"Peak PI/s     : {result['peak_pi_rate']}")
         print(f"Avg CPU%      : {avg_cpu_str}")
         print(f"Peak CPU%     : {peak_cpu_str}")
+        _print_delay_section(result["delay_baseline"], result["delay_under_attack"])
         print("=" * 60)
 
-        set_mitigation_enabled(True)
         return
 
     # Default stepped mode
@@ -411,63 +583,77 @@ def main():
     print()
 
     rows = []
-    top_hdr = f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Avg CPU %':>10}"
+    top_hdr = f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Avg CPU %':>10}  {'RTT avg':>10}"
     top_sep = "-" * len(top_hdr)
     print(top_hdr)
     print(top_sep)
 
-    for target_pps in RAMP_STEPS:
-        print(f"\n  Step: {target_pps} pps (must hold >= target for {STEP_DURATION}s) ...")
-        avg_rate, peak_rate, avg_cpu, peak_cpu, reached_hold, time_to_reach, hold_time, required_rate = run_step(
-            target_pps,
-            unique_sources=args.unique_sources,
-        )
+    try:
+        for target_pps in RAMP_STEPS:
+            print(f"\n  Step: {target_pps} pps (must hold >= target for {STEP_DURATION}s) ...")
+            row = run_step(target_pps=target_pps, baseline_rtt=baseline_rtt)
+            rows.append(row)
 
-        rows.append({
-            "target_pps":   target_pps,
-            "required_pi_rate": required_rate,
-            "avg_pi_rate":  avg_rate,
-            "peak_pi_rate": peak_rate,
-            "avg_cpu_percent": avg_cpu,
-            "peak_cpu_percent": peak_cpu,
-            "reached_and_held": reached_hold,
-            "time_to_reach_s": time_to_reach,
-            "hold_time_s": hold_time,
-        })
-        avg_cpu_str = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
-        peak_cpu_str = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
-        if reached_hold:
-            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  avg_cpu={avg_cpu_str}  peak_cpu={peak_cpu_str}  reached_in={time_to_reach}s  required>={required_rate}/s")
-        else:
-            print(f"  -> avg={avg_rate}/s  peak={peak_rate}/s  avg_cpu={avg_cpu_str}  peak_cpu={peak_cpu_str}  FAILED to hold >= {required_rate}/s within {STEP_TIMEOUT}s")
-            print("\nStopping test because target PPS could not be reached and held in time.")
-            break
+            avg_cpu = row["avg_cpu_percent"]
+            peak_cpu = row["peak_cpu_percent"]
+            avg_cpu_str = f"{avg_cpu}%" if avg_cpu is not None else "n/a"
+            peak_cpu_str = f"{peak_cpu}%" if peak_cpu is not None else "n/a"
+            step_rtt = row["delay_under_attack"]
+            step_rtt_avg = f"{step_rtt['avg_ms']}ms" if step_rtt else "n/a"
 
-        # Cool-down between steps so the window resets cleanly
-        time.sleep(5)
+            if row["reached_and_held"]:
+                print(
+                    f"  -> avg={row['avg_pi_rate']}/s  peak={row['peak_pi_rate']}/s  "
+                    f"avg_cpu={avg_cpu_str}  peak_cpu={peak_cpu_str}  "
+                    f"rtt_avg={step_rtt_avg}  reached_in={row['time_to_reach_s']}s  "
+                    f"required>={row['required_pi_rate']}/s"
+                )
+            else:
+                print(
+                    f"  -> avg={row['avg_pi_rate']}/s  peak={row['peak_pi_rate']}/s  "
+                    f"avg_cpu={avg_cpu_str}  peak_cpu={peak_cpu_str}  "
+                    f"rtt_avg={step_rtt_avg}  FAILED to hold >= {row['required_pi_rate']}/s "
+                    f"within {STEP_TIMEOUT}s"
+                )
+                print("\nStopping test because target PPS could not be reached and held in time.")
+                break
 
-    # Restore mitigation for normal controller operation.
-    set_mitigation_enabled(True)
+            # Cool-down between steps so the window resets cleanly.
+            time.sleep(5)
+    finally:
+        # Restore mitigation for normal controller operation.
+        set_mitigation_enabled(True)
 
-    # Print summary table
-    summary_hdr = f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  {'Avg CPU %':>10}  {'Peak CPU %':>11}"
+    # Print summary table with RTT columns.
+    summary_hdr = (
+        f"{'Target PPS':>12}  {'Avg PI Rate':>12}  {'Peak PI Rate':>13}  "
+        f"{'Avg CPU %':>10}  {'Peak CPU %':>11}  {'RTT avg':>10}  {'RTT d%':>8}"
+    )
     summary_sep = "-" * len(summary_hdr)
     print("\n" + "=" * len(summary_hdr))
     print(summary_hdr)
     print(summary_sep)
     for r in rows:
-        avg_cpu = r['avg_cpu_percent'] if r['avg_cpu_percent'] is not None else "n/a"
-        peak_cpu = r['peak_cpu_percent'] if r['peak_cpu_percent'] is not None else "n/a"
-        print(f"{r['target_pps']:>12}  {r['avg_pi_rate']:>12}  {r['peak_pi_rate']:>13}  {avg_cpu:>10}  {peak_cpu:>11}")
+        avg_cpu = r["avg_cpu_percent"] if r["avg_cpu_percent"] is not None else "n/a"
+        peak_cpu = r["peak_cpu_percent"] if r["peak_cpu_percent"] is not None else "n/a"
+        step_rtt = r["delay_under_attack"]
+        rtt_avg = f"{step_rtt['avg_ms']}ms" if step_rtt else "n/a"
+        rtt_delta = _rtt_delta_str(step_rtt, baseline_rtt)
+        print(
+            f"{r['target_pps']:>12}  {r['avg_pi_rate']:>12}  {r['peak_pi_rate']:>13}  "
+            f"{avg_cpu:>10}  {peak_cpu:>11}  {rtt_avg:>10}  {rtt_delta:>8}"
+        )
     print("=" * len(summary_hdr))
 
-    # Find where the rate plateaus (controller can't keep up)
+    # Find where the rate plateaus (controller can't keep up).
     prev_rate = 0
     for r in rows:
         gain = r["avg_pi_rate"] - prev_rate
         if prev_rate > 0 and gain < prev_rate * 0.1:
-            print(f"\nRate appears to plateau around {r['target_pps']} pps "
-                  f"(pi_rate gain dropped to {gain:.1f}/s).")
+            print(
+                f"\nRate appears to plateau around {r['target_pps']} pps "
+                f"(pi_rate gain dropped to {gain:.1f}/s)."
+            )
             break
         prev_rate = r["avg_pi_rate"]
 
