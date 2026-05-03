@@ -279,6 +279,76 @@ def main():
             plt.close()
             made.append(path)
     
+
+    # parse iperf throughput logs for trusted traffic
+    import re
+    def parse_iperf_log(path, offset=0.0):
+        rows = []
+        if not os.path.exists(path):
+            return rows
+        idx = 0
+        with open(path, errors='ignore') as f:
+            for line in f:
+                if 'bits/sec' not in line:
+                    continue
+                m = re.search(r'([0-9.]+)\s+([KMG])?bits/sec', line)
+                if not m:
+                    continue
+                val = float(m.group(1))
+                unit = m.group(2) or ''
+                if unit == 'K':
+                    val = val / 1000.0
+                elif unit == 'G':
+                    val = val * 1000.0
+                rows.append({'t': offset + idx, 'mbps': val})
+                idx += 1
+        return rows
+
+    config_path = os.path.join(d, 'config.json')
+    valid_new_delay = 10
+    attack_delay = 0
+    if os.path.exists(config_path):
+        with open(config_path) as cf:
+            cfg = json.load(cf)
+            valid_new_delay = float(cfg.get('valid_new_delay', 10) or 10)
+            attack_delay = float(cfg.get('attack_delay', 0) or 0)
+
+    iperf_series = [
+        ('iperf_existing', 'existing trusted throughput', 0),
+        ('iperf_new', 'new trusted throughput', valid_new_delay),
+    ]
+    plt.figure(figsize=(14, 6))
+    has_iperf = False
+    for log_name, label, offset in iperf_series:
+        rows = parse_iperf_log(os.path.join(d, f'{log_name}.log'), offset)
+        if not rows:
+            continue
+        has_iperf = True
+        csvp = os.path.join(d, f'{log_name}.csv')
+        with open(csvp, 'w', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=['t', 'mbps'])
+            w.writeheader()
+            w.writerows(rows)
+        plt.plot([r['t'] for r in rows], [r['mbps'] for r in rows], label=label)
+
+    if has_iperf:
+        plt.axvline(attack_delay, linestyle='--', label='attack starts')
+        ev_times = event_times(events, ['mitigation_active'])
+        if 'mitigation_active' in ev_times:
+            plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
+        plt.xlabel('time (s)')
+        plt.ylabel('Mbits/sec')
+        plt.title('Trusted Throughput During Attack and Recovery')
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        path = os.path.join(out, 'trusted_throughput_combined.png')
+        plt.savefig(path)
+        plt.close()
+        made.append(path)
+    else:
+        plt.close()
+
     if events:
         order=['threshold_crossed','attack_detected','mitigation_active']
         evs=[e for e in events if e.get('event') in order]

