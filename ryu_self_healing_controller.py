@@ -1,5 +1,4 @@
 import time
-import threading
 from collections import defaultdict, deque
 
 from ryu.base import app_manager
@@ -92,8 +91,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.trusted_sources = set()
         self.trust_threshold = TRUST_THRESHOLD
         self.mitigated_sources = defaultdict(int)  # Track mitigated packet count per source
-        self._trust_watch_events = {}
-        self._trust_watch_start_times = {}
 
         # Initialize managers
         self.attack_state = AttackState(self.logger)
@@ -118,8 +115,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # reset trust evaluation stats
         self.source_seen_counts.clear()
         self.trusted_sources.clear()
-        self._trust_watch_events.clear()
-        self._trust_watch_start_times.clear()
 
         # reset managers
         self.attack_state.clear_all()
@@ -429,8 +424,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         if self.source_seen_counts[src] >= self.trust_threshold:
             self.trusted_sources.add(src)
-            if src in self._trust_watch_events:
-                self._trust_watch_events[src].set()
 
     def get_trust_state(self):
         """Return trust-table state for REST inspection."""
@@ -451,31 +444,6 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "result": "success",
             "message": "trust state cleared",
         }
-
-    def wait_for_trust(self, src_mac, timeout_sec=60):
-        """Block until a source becomes trusted or timeout expires."""
-        # If already trusted, return immediately
-        if src_mac in self.trusted_sources:
-            return {"status": "trusted", "time_to_trust": 0}
-
-        # Create event for this source
-        event = threading.Event()
-        self._trust_watch_events[src_mac] = event
-        self._trust_watch_start_times[src_mac] = time.time()
-
-        # Wait for event or timeout
-        acquired = event.wait(timeout=timeout_sec)
-
-        # Cleanup
-        if src_mac in self._trust_watch_events:
-            del self._trust_watch_events[src_mac]
-        start_time = self._trust_watch_start_times.pop(src_mac, time.time())
-
-        if acquired and src_mac in self.trusted_sources:
-            time_to_trust = time.time() - start_time
-            return {"status": "trusted", "time_to_trust": round(time_to_trust, 2)}
-        else:
-            return {"status": "timeout", "timeout_sec": timeout_sec}
 
     def _send_packet_out(self, datapath, msg, in_port, actions):
         """Emit a PacketOut while preserving switch buffer usage."""

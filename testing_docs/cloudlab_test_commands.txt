@@ -1,0 +1,314 @@
+CloudLab SDN DoS Test Commands
+==============================
+
+Goal
+----
+Measure controller performance, latency, throughput, Packet-In behavior, and trust-based mitigation behavior during a DoS attack.
+
+Experiment timeline used by these commands:
+- 0-30s: warm-up period so the trusted source is learned before attack
+- 30s: attack starts
+- 40s: new trusted flow starts from the same trusted source
+- 30-120s: attack window
+- 120-180s: recovery window
+
+Required node roles
+-------------------
+CONTROLLER_NODE: runs Ryu controller + run_experiment.sh + metrics collection
+TRUSTED_NODE: generates legitimate ping/iperf traffic
+ATTACKER_NODE: generates hping3 or scapy attack traffic
+VICTIM_NODE: receives legitimate traffic and attack traffic
+
+Fill these in first
+-------------------
+export USER="viliang"
+export CONTROLLER="http://127.0.0.1:8080"
+export TRUSTED="<trusted-node-hostname-or-ip>"
+export ATTACKER="<attacker-node-hostname-or-ip>"
+export VICTIM="<victim-node-ip>"
+export PROJECT_DIR="$PWD"
+
+Optional: interface for controller link utilization.
+Leave blank if unsure.
+export CONTROLLER_IFACE=""
+
+Install dependencies on relevant nodes
+--------------------------------------
+# On attacker node if using hping3:
+sudo apt-get update
+sudo apt-get install -y hping3
+
+# On attacker node if using scapy:
+sudo apt-get update
+sudo apt-get install -y python3-scapy
+
+# On trusted + victim nodes if using throughput:
+sudo apt-get update
+sudo apt-get install -y iperf
+
+SSH check from controller node
+------------------------------
+ssh $USER@$TRUSTED "hostname"
+ssh $USER@$ATTACKER "hostname"
+ssh $USER@$VICTIM "hostname"
+
+If any SSH command fails, add the controller node public key to the target node through CloudLab or ~/.ssh/authorized_keys.
+
+Important scapy requirement
+---------------------------
+For scapy remote attack mode, packetin_attack.py must exist on the attacker node at the same PROJECT_DIR path, or you must pass --remote-script-dir with the path on the attacker node.
+
+Example copy from controller to attacker:
+ssh $USER@$ATTACKER "mkdir -p $PROJECT_DIR"
+scp packetin_attack.py $USER@$ATTACKER:$PROJECT_DIR/packetin_attack.py
+
+Start Ryu controller on controller node
+--------------------------------------
+# Run this in one terminal on the controller node:
+ryu-manager ryu_self_healing_controller.py --observe-links --ofp-tcp-listen-port 6633
+
+Basic controller API checks
+---------------------------
+curl http://127.0.0.1:8080/stats
+curl http://127.0.0.1:8080/attack/status
+curl http://127.0.0.1:8080/hosts
+
+Control test: normal traffic, no attack, no mitigation
+------------------------------------------------------
+# STEP 1 — Establish baseline metrics for normal operation.
+# Measures average RTT, controller CPU, and Packet-In rate under clean conditions.
+# Mitigation is OFF. No attack traffic. Produces baseline_summary.json with statistics.
+
+ssh $USER@$VICTIM "iperf -s -D"
+ssh $USER@$TRUSTED "ping -i 0.5 -w 180 $VICTIM > /tmp/ping_control.log 2>&1 &"
+ssh $USER@$TRUSTED "iperf -c $VICTIM -t 180 > /tmp/iperf_control.log 2>&1 &"
+
+python3 experiment_scripts/collect_metrics.py \
+  --duration 180 \
+  --out results/control_normal_traffic \
+  --controller $CONTROLLER \
+  --iface "$CONTROLLER_IFACE" \
+  --baseline
+
+# View baseline statistics:
+cat results/control_normal_traffic/baseline_summary.json
+
+# Extract recommended threshold:
+export THRESHOLD=$(python3 -c "import json; d=json.load(open('results/control_normal_traffic/baseline_summary.json')); print(int((d['packet_in_rate']['max'] or 0) * 3))")
+echo "Recommended threshold: $THRESHOLD packets/sec"
+
+Controller saturation point (mitigation OFF, rate ramp)
+-------------------------------------------------------
+# STEP 2 — Find the attack rate where the controller becomes saturated.
+# Ramps attack rate from 1k to 50k pps with mitigation OFF.
+# Measures RTT and packet loss to detect saturation.
+
+export ATTACK_IFACE="<attacker-interface-name>"
+
+python3 experiment_scripts/saturation_finder.py \
+  --controller $CONTROLLER \
+  --out results/saturation_analysis \
+  --target $VICTIM \
+  --iface $ATTACK_IFACE \
+  --attack-method scapy \
+  --cmd-prefix "ssh $USER@$ATTACKER" \
+  --step-duration 30 \
+  --rtt-threshold-ms 50 \
+  --loss-threshold-percent 5 \
+  --rates 1000,5000,10000,20000,50000
+
+cat results/saturation_analysis/saturation_report.json
+
+Threshold tuning baseline
+-------------------------
+# STEP 3 — Measure controller behavior under attack with mitigation ON.
+# This baseline has no attack, but mitigation is ON and threshold is calibrated.
+# Use it to observe normal Packet-In rate with the protection system active.
+./run_experiment.sh \
+  --name baseline_no_attack \
+  --rate 0 \
+  --size 64 \
+  --duration 180 \
+  --attack-delay 30 \
+  --attack-length 0 \
+  --mitigation on \
+  --attack-method hping3 \
+  --attack-target $VICTIM \
+  --valid-target $VICTIM \
+  --valid-cmd-prefix "ssh $USER@$TRUSTED" \
+  --controller $CONTROLLER \
+  --controller-iface "$CONTROLLER_IFACE" \
+  --valid-new-delay 40 \
+  --iperf on \
+  --iperf-server-cmd-prefix "ssh $USER@$VICTIM"
+
+python3 plot_results.py results/$(ls -td results/baseline_no_attack_* | head -n 1 | xargs basename)
+
+Choose threshold after saturation analysis
+--------------------------------------------
+# The THRESHOLD was automatically extracted from the baseline control test above.
+# It follows the recommended rule: max baseline Packet-In rate × 3
+# 
+# If baseline Packet-In is very low or saturation testing produces no clear inflection,
+# use a practical threshold like 100, 200, or 400 first. Avoid thresholds (like 800) 
+# unless the actual attack rate confirmed it was necessary.
+#
+# THRESHOLD is now set. Use $THRESHOLD in the experiments below.
+
+Core comparison: hping3 method
+------------------------------
+# 1. Attack with mitigation OFF
+./run_experiment.sh \
+  --name hping_attack_mit_off \
+  --rate 10000 \
+  --size 64 \
+  --duration 180 \
+  --attack-delay 30 \
+  --attack-length 90 \
+  --mitigation off \
+  --threshold $THRESHOLD \
+  --attack-method hping3 \
+  --attack-target $VICTIM \
+  --valid-target $VICTIM \
+  --valid-cmd-prefix "ssh $USER@$TRUSTED" \
+  --attack-cmd-prefix "ssh $USER@$ATTACKER" \
+  --controller $CONTROLLER \
+  --controller-iface "$CONTROLLER_IFACE" \
+  --valid-new-delay 40 \
+  --iperf on \
+  --iperf-server-cmd-prefix "ssh $USER@$VICTIM"
+
+# 2. Attack with mitigation ON
+./run_experiment.sh \
+  --name hping_attack_mit_on \
+  --rate 10000 \
+  --size 64 \
+  --duration 180 \
+  --attack-delay 30 \
+  --attack-length 90 \
+  --mitigation on \
+  --threshold $THRESHOLD \
+  --attack-method hping3 \
+  --attack-target $VICTIM \
+  --valid-target $VICTIM \
+  --valid-cmd-prefix "ssh $USER@$TRUSTED" \
+  --attack-cmd-prefix "ssh $USER@$ATTACKER" \
+  --controller $CONTROLLER \
+  --controller-iface "$CONTROLLER_IFACE" \
+  --valid-new-delay 40 \
+  --iperf on \
+  --iperf-server-cmd-prefix "ssh $USER@$VICTIM"
+
+Core comparison: scapy method
+-----------------------------
+# Use this if you want stronger Packet-In saturation than hping3.
+# Set ATTACK_IFACE to the attacker's egress interface toward the SDN/OVS network.
+export ATTACK_IFACE="<attacker-interface-name>"
+
+./run_experiment.sh \
+  --name scapy_attack_mit_on \
+  --rate 1200 \
+  --size 64 \
+  --duration 180 \
+  --attack-delay 30 \
+  --attack-length 90 \
+  --mitigation on \
+  --threshold $THRESHOLD \
+  --attack-method scapy \
+  --attack-iface $ATTACK_IFACE \
+  --attack-target $VICTIM \
+  --valid-target $VICTIM \
+  --valid-cmd-prefix "ssh $USER@$TRUSTED" \
+  --attack-cmd-prefix "ssh $USER@$ATTACKER" \
+  --remote-script-dir "$PROJECT_DIR" \
+  --controller $CONTROLLER \
+  --controller-iface "$CONTROLLER_IFACE" \
+  --valid-new-delay 40 \
+  --iperf on \
+  --iperf-server-cmd-prefix "ssh $USER@$VICTIM"
+
+Rate sweep with mitigation ON
+-----------------------------
+# hping3 --flood does not truly throttle by --rate; rate is useful as a label unless start_attack.sh is changed to throttle hping3.
+# For true controlled rate sweeps, use scapy.
+
+for r in 600 900 1200 1500 3000 5000 10000; do
+  ./run_experiment.sh \
+    --name rate_${r}_scapy_mit_on \
+    --rate $r \
+    --size 64 \
+    --duration 180 \
+    --attack-delay 30 \
+    --attack-length 90 \
+    --mitigation on \
+    --threshold $THRESHOLD \
+    --attack-method scapy \
+    --attack-iface $ATTACK_IFACE \
+    --attack-target $VICTIM \
+    --valid-target $VICTIM \
+    --valid-cmd-prefix "ssh $USER@$TRUSTED" \
+    --attack-cmd-prefix "ssh $USER@$ATTACKER" \
+    --remote-script-dir "$PROJECT_DIR" \
+    --controller $CONTROLLER \
+    --controller-iface "$CONTROLLER_IFACE" \
+    --valid-new-delay 40 \
+    --iperf on \
+    --iperf-server-cmd-prefix "ssh $USER@$VICTIM"
+done
+
+Packet size sweep with mitigation ON
+------------------------------------
+for s in 64 256 512; do
+  ./run_experiment.sh \
+    --name size_${s}_scapy_mit_on \
+    --rate 1200 \
+    --size $s \
+    --duration 180 \
+    --attack-delay 30 \
+    --attack-length 90 \
+    --mitigation on \
+    --threshold $THRESHOLD \
+    --attack-method scapy \
+    --attack-iface $ATTACK_IFACE \
+    --attack-target $VICTIM \
+    --valid-target $VICTIM \
+    --valid-cmd-prefix "ssh $USER@$TRUSTED" \
+    --attack-cmd-prefix "ssh $USER@$ATTACKER" \
+    --remote-script-dir "$PROJECT_DIR" \
+    --controller $CONTROLLER \
+    --controller-iface "$CONTROLLER_IFACE" \
+    --valid-new-delay 40 \
+    --iperf on \
+    --iperf-server-cmd-prefix "ssh $USER@$VICTIM"
+done
+
+Generate per-run graphs
+-----------------------
+for d in results/*; do
+  [ -d "$d" ] || continue
+  [ -f "$d/config.json" ] || continue
+  python3 plot_results.py "$d"
+done
+
+Generate cross-run graphs
+-------------------------
+python3 summarize_runs.py results --output results/summary
+
+Useful output files
+-------------------
+Per run:
+- controller_metrics.csv
+- attack_status.csv
+- mitigation_metrics.csv
+- events.csv
+- packetin_rate_detection.png
+- cpu_over_time.png
+- legitimate_rtt_combined.png
+- trusted_throughput_combined.png
+- mitigation_drops_over_time.png
+- response_timeline.png
+
+Cross-run:
+- results/summary/cross_run_summary.csv
+- results/summary/rate_vs_*.png
+- results/summary/size_vs_*.png

@@ -348,6 +348,31 @@ def main():
         made.append(path)
     else:
         plt.close()
+        made.append(path)
+    
+    if mit:
+        plt.figure(figsize=(14, 6))
+        xs=[num(r,'t') for r in mit]
+        rate_limited=[num(r,'rate_limited_ports_count') for r in mit]
+        escalated=[num(r,'escalated_ports_count') for r in mit]
+        
+        plt.plot(xs, rate_limited, label='rate-limited ports', marker='o')
+        plt.plot(xs, escalated, label='escalated (drop) ports', marker='s')
+        
+        ev_times=event_times(events, ['mitigation_active'])
+        if 'mitigation_active' in ev_times:
+            plt.axvline(ev_times['mitigation_active'], linestyle=':', color='green', alpha=0.5, label='mitigation starts')
+        
+        plt.xlabel('time (s)')
+        plt.ylabel('number of ports')
+        plt.title('Port-level mitigation escalation over time')
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        path=os.path.join(out,'mitigation_port_escalation.png')
+        plt.savefig(path)
+        plt.close()
+        made.append(path)
 
     if events:
         order=['threshold_crossed','attack_detected','mitigation_active']

@@ -269,27 +269,3 @@ class RestController(ControllerBase):
         """
         data = self.app.clear_trust_state()
         return self._json_response(data)
-
-    @route('trust_watch', "/trust/watch", methods=['POST'])
-    def trust_watch(self, req, **kwargs):
-        """
-        POST /trust/watch?source_mac=XX:XX:XX:XX:XX:XX&timeout_sec=N
-
-        Block until source_mac appears in trusted_sources or timeout expires.
-        Returns {"status": "trusted", "time_to_trust": N} or {"status": "timeout"}
-        """
-        source_mac = req.GET.get('source_mac')
-        timeout_sec = req.GET.get('timeout_sec', '60')
-
-        if not source_mac:
-            return self._bad_request("source_mac query parameter required")
-
-        try:
-            timeout_sec = int(timeout_sec)
-        except (ValueError, TypeError):
-            return self._bad_request("timeout_sec must be an integer")
-
-        # Block until trust acquired or timeout
-        result = self.app.wait_for_trust(source_mac, timeout_sec)
-        return self._json_response(result)
-    
