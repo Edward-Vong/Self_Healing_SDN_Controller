@@ -1,5 +1,4 @@
 import json 
-import time
 
 from ryu.app.wsgi import ControllerBase, route
 from webob import Response
@@ -28,6 +27,10 @@ class RestController(ControllerBase):
         super(RestController, self).__init__(req, link, data, **config)
         self.app = data[INSTANCE_NAME]
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     def _json_response(self, data, status=200):
         """Helper to create a JSON response."""
         return Response(
@@ -43,6 +46,14 @@ class RestController(ControllerBase):
         except Exception:
             return None
 
+    def _bad_request(self, message):
+        """Return a standardized HTTP 400 JSON response."""
+        return self._json_response({"result": "error", "message": message}, 400)
+
+    # ------------------------------------------------------------------
+    # Read-only Status Endpoints
+    # ------------------------------------------------------------------
+
     @route('stats', '/stats', methods=['GET'])
     def stats(self, req, **kwargs):
         """
@@ -57,11 +68,7 @@ class RestController(ControllerBase):
         - attack status
         - Packet_In threshold
         """
-        body = json.dumps(self.app.get_stats(), indent=2) + "\n"
-        return Response(
-            content_type='application/json',
-            text=body
-        )
+        return self._json_response(self.app.get_stats())
         
     @route('switches', "/switches", methods=['GET'])
     def switches(self, req, **kwargs):
@@ -145,6 +152,10 @@ class RestController(ControllerBase):
         """
         data = self.app.start_mitigation()
         return self._json_response(data)
+
+    # ------------------------------------------------------------------
+    # Control Endpoints
+    # ------------------------------------------------------------------
     
     @route('mitigate_end', "/mitigate/end", methods=['POST'])
     def mitigate_end(self, req, **kwargs):
@@ -158,7 +169,7 @@ class RestController(ControllerBase):
     @route('reset', "/config/reset", methods=['POST'])
     def reset(self, req, **kwargs):
         """ 
-        GET  /config/reset
+        POST /config/reset
 
         Resets PI counters and states
         """
@@ -179,13 +190,16 @@ class RestController(ControllerBase):
         """
         data = self._parse_json_body(req)
         if data is None:
-            message = {
-                "result": "error",
-                "message": "Invalid JSON in request body"
-            }
-            return self._json_response(message, 400)
-        
-        new_threshold = int(data.get("threshold", self.app.packet_in_threshold))
+            return self._bad_request("Invalid JSON in request body")
+
+        if "threshold" not in data:
+            return self._bad_request("Request body must include integer 'threshold'")
+
+        try:
+            new_threshold = int(data.get("threshold"))
+        except (ValueError, TypeError):
+            return self._bad_request("'threshold' must be an integer")
+
         self.app.packet_in_threshold = new_threshold
         
         message = {
@@ -203,24 +217,16 @@ class RestController(ControllerBase):
         """
         data = self._parse_json_body(req)
         if data is None or "enabled" not in data:
-            message = {
-                "result": "error",
-                "message": "Request body must include boolean 'enabled'"
-            }
-            return self._json_response(message, 400)
+            return self._bad_request("Request body must include boolean 'enabled'")
 
         enabled = data.get("enabled")
         if not isinstance(enabled, bool):
-            message = {
-                "result": "error",
-                "message": "'enabled' must be a boolean"
-            }
-            return self._json_response(message, 400)
+            return self._bad_request("'enabled' must be a boolean")
 
         return self._json_response(self.app.set_mitigation_enabled(enabled))
     
     @route('history', "/history", methods=['GET'])
-    def history(self, req, **kwarsg):
+    def history(self, req, **kwargs):
         """
         GET /history
         
@@ -235,4 +241,31 @@ class RestController(ControllerBase):
             "last_detection_time": self.app.last_detection_time
         }
         return self._json_response(data)
-    
+
+    # ------------------------------------------------------------------
+    # Trust Endpoints
+    # ------------------------------------------------------------------
+
+    @route('trust', "/trust", methods=['GET'])
+    def get_trust(self, req, **kwargs):
+        """
+        GET /trust
+
+        Returns trust table state:
+        - trusted_sources list
+        - source_seen_counts
+        - source_packet_counts
+        - trust_threshold
+        """
+        data = self.app.get_trust_state()
+        return self._json_response(data)
+
+    @route('trust_clear', "/trust/clear", methods=['POST'])
+    def trust_clear(self, req, **kwargs):
+        """
+        POST /trust/clear
+
+        Reset trust table and counters for clean test runs.
+        """
+        data = self.app.clear_trust_state()
+        return self._json_response(data)
