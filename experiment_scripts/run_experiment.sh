@@ -224,9 +224,10 @@ else
   sleep "$ATTACK_DURATION"
 fi
 
-# Stop local and remote-ish attack processes. Remote hping/scapy should exit via timeout/duration, but this is a safe cleanup.
-sudo pkill -f hping3 2>/dev/null || true
-sudo pkill -f packetin_attack.py 2>/dev/null || true
+# Stop local attack processes only.
+# Use exact process-name matching so we do not kill this script when args include "hping3".
+sudo pkill -x hping3 2>/dev/null || true
+sudo pkill -f '[p]acketin_attack.py' 2>/dev/null || true
 
 wait "$(cat "$OUT/collector.pid")" || true
 
