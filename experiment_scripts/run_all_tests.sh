@@ -298,31 +298,86 @@ run_main_experiment() {
   log_stage "[INFO] Completed run: $name"
 }
 
+show_run_debug_tail() {
+  local run_name="$1"
+  local latest_dir
+  latest_dir=$(ls -1dt "$RESULTS_DIR/${run_name}_"* 2>/dev/null | head -n 1 || true)
+  if [ -z "$latest_dir" ]; then
+    log_stage "[WARN] No output directory found for $run_name"
+    return
+  fi
+  log_stage "[INFO] Debug tail from $latest_dir"
+  if [ -f "$latest_dir/experiment.log" ]; then
+    echo "----- experiment.log (last 60 lines) -----"
+    tail -n 60 "$latest_dir/experiment.log" || true
+  fi
+  if [ -f "$latest_dir/collector_stderr.log" ]; then
+    echo "----- collector_stderr.log (last 40 lines) -----"
+    tail -n 40 "$latest_dir/collector_stderr.log" || true
+  fi
+  if [ -f "$latest_dir/collector_stdout.log" ]; then
+    echo "----- collector_stdout.log (last 20 lines) -----"
+    tail -n 20 "$latest_dir/collector_stdout.log" || true
+  fi
+}
+
+run_baseline_no_attack_once() {
+  local attempt="$1"
+  local iperf_mode="$2"
+  log_stage "[INFO] baseline_no_attack attempt=$attempt iperf=$iperf_mode"
+  set +e
+  RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
+    --name baseline_no_attack \
+    --rate 0 \
+    --size 64 \
+    --duration "$DURATION" \
+    --attack-delay "$ATTACK_DELAY" \
+    --attack-length 0 \
+    --mitigation on \
+    --threshold "$THRESHOLD" \
+    --attack-method hping3 \
+    --attack-target "$VICTIM_DATA_IP" \
+    --valid-target "$VICTIM_DATA_IP" \
+    --controller "$CONTROLLER_URL" \
+    --controller-iface "$CONTROLLER_IFACE_VAL" \
+    --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
+    --valid-cmd-prefix "$CMD_PREFIX_VALID" \
+    --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
+    --iperf "$iperf_mode" \
+    --clear-ovs "$CLEAR_OVS_MODE" \
+    --user "$USER_NAME" \
+    --trusted "$TRUSTED_HOST" \
+    --attacker "$ATTACKER_HOST" \
+    --victim "$VICTIM_HOST" \
+    --project-dir "$PROJECT_DIR_VAL" \
+    2>&1 | tee -a "$RESULTS_DIR/baseline_no_attack.driver.log"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  return "$rc"
+}
+
 log_stage "[INFO] Running threshold tuning baseline (quiet period expected: about ${DURATION}s)"
-bash "$SCRIPT_DIR/run_experiment.sh" \
-  --name baseline_no_attack \
-  --rate 0 \
-  --size 64 \
-  --duration "$DURATION" \
-  --attack-delay "$ATTACK_DELAY" \
-  --attack-length 0 \
-  --mitigation on \
-  --threshold "$THRESHOLD" \
-  --attack-method hping3 \
-  --attack-target "$VICTIM_DATA_IP" \
-  --valid-target "$VICTIM_DATA_IP" \
-  --controller "$CONTROLLER_URL" \
-  --controller-iface "$CONTROLLER_IFACE_VAL" \
-  --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
-  --valid-cmd-prefix "$CMD_PREFIX_VALID" \
-  --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
-  --iperf on \
-  --clear-ovs "$CLEAR_OVS_MODE" \
-  --user "$USER_NAME" \
-  --trusted "$TRUSTED_HOST" \
-  --attacker "$ATTACKER_HOST" \
-  --victim "$VICTIM_HOST" \
-  --project-dir "$PROJECT_DIR_VAL"
+baseline_rc=0
+if ! run_baseline_no_attack_once 1 on; then
+  baseline_rc=$?
+  log_stage "[WARN] baseline_no_attack attempt=1 failed with exit code $baseline_rc"
+  show_run_debug_tail "baseline_no_attack"
+
+  if [ "$baseline_rc" -eq 143 ] || [ "$baseline_rc" -eq 137 ]; then
+    log_stage "[WARN] baseline_no_attack ended by signal-style code ($baseline_rc); retrying once with iperf disabled"
+    if ! run_baseline_no_attack_once 2 off; then
+      baseline_rc=$?
+      log_stage "[WARN] baseline_no_attack attempt=2 failed with exit code $baseline_rc"
+      show_run_debug_tail "baseline_no_attack"
+    else
+      baseline_rc=0
+    fi
+  fi
+fi
+
+if [ "$baseline_rc" -ne 0 ]; then
+  log_stage "[WARN] baseline_no_attack failed after retries; continuing full suite with threshold=$THRESHOLD"
+fi
 log_stage "[INFO] Completed threshold tuning baseline"
 
 if [ "$RUN_CORE" = "on" ]; then

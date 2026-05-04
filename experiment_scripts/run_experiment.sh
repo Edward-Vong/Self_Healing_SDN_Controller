@@ -116,6 +116,27 @@ EOF_JSON
   echo "mitigation=$MITIGATION"
 } > "$OUT/experiment.log"
 
+RUN_VERBOSE="${RUN_EXPERIMENT_VERBOSE:-0}"
+
+run_log() {
+  local msg="$1"
+  local ts
+  ts="$(date '+%Y-%m-%d %H:%M:%S')"
+  echo "[$ts] $msg" >> "$OUT/experiment.log"
+  if [ "$RUN_VERBOSE" = "1" ]; then
+    echo "[$ts] [run_experiment:$NAME] $msg"
+  fi
+}
+
+on_term() {
+  run_log "[ERROR] Received SIGTERM/SIGINT; ATTACK_DELAY=$ATTACK_DELAY ATTACK_DURATION=${ATTACK_DURATION:-unset}"
+  ps -o pid,ppid,pgid,sid,comm,args -p $$ >> "$OUT/experiment.log" 2>/dev/null || true
+  exit 143
+}
+
+trap on_term TERM INT
+run_log "[INFO] Starting run with PID=$$ duration=$DURATION attack_delay=$ATTACK_DELAY"
+
 append_event() {
   local event="$1"
   local value="${2:-}"
@@ -136,6 +157,7 @@ PY
 
 # reset and configure controller if reachable
 curl -s -X POST "$CONTROLLER/config/reset" >> "$OUT/experiment.log" 2>&1 || true
+run_log "[INFO] Controller reset/config endpoints attempted"
 
 if [ "$CLEAR_OVS" = "on" ] || [ "$CLEAR_OVS" = "auto" ]; then
   echo "[INFO] Clearing local OVS flow tables if Mininet switches exist..." >> "$OUT/experiment.log"
@@ -155,17 +177,20 @@ if [ -n "$THRESHOLD" ]; then
 fi
 
 START_EPOCH=$(date +%s.%N)
+run_log "[INFO] Metrics collection phase starting"
 
 # Start iperf server on victim when requested. For Mininet/local testing, start it manually if needed.
 if [ "$IPERF" = "on" ] && [ -n "$IPERF_SERVER_PREFIX" ]; then
   eval "$IPERF_SERVER_PREFIX iperf -s" > "$OUT/iperf_server.log" 2> "$OUT/iperf_server.err" &
   echo $! > "$OUT/iperf_server.pid"
+  run_log "[INFO] Started remote iperf server helper pid=$(cat "$OUT/iperf_server.pid" 2>/dev/null || echo unknown)"
   sleep 1
 fi
 
 # Start collectors first, then legitimate warm-up traffic.
 python3 "$SCRIPT_DIR/collect_metrics.py" --duration "$DURATION" --out "$OUT" --controller "$CONTROLLER" --iface "$CONTROLLER_IFACE" ${THRESHOLD:+--threshold "$THRESHOLD"} > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
 echo $! > "$OUT/collector.pid"
+run_log "[INFO] Started collector pid=$(cat "$OUT/collector.pid" 2>/dev/null || echo unknown)"
 for _ in 1 2 3 4 5; do
   [ -f "$OUT/events.csv" ] && break
   sleep 0.2
@@ -174,8 +199,10 @@ done
 "$SCRIPT_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1 \
   || echo "[WARN] start_valid_flows exited non-zero; legitimate traffic may be absent" >> "$OUT/experiment.log"
 append_event "valid_traffic_started" "$VALID_MODE" || true
+run_log "[INFO] Valid traffic launched (mode=$VALID_MODE)"
 
 sleep "$ATTACK_DELAY"
+run_log "[INFO] Attack delay phase completed"
 
 if [ -n "$ATTACK_LENGTH" ]; then
   ATTACK_DURATION="$ATTACK_LENGTH"
@@ -221,6 +248,7 @@ if [ "$RUN_ATTACK" = "yes" ]; then
   append_event "attack_ended" "$ATTACK_METHOD" || true
 else
   echo "[INFO] No attack launched because rate=$RATE or attack duration=$ATTACK_DURATION" >> "$OUT/experiment.log"
+  run_log "[INFO] No attack launched; sleeping attack window ATTACK_DURATION=$ATTACK_DURATION"
   sleep "$ATTACK_DURATION"
 fi
 
@@ -230,6 +258,7 @@ sudo pkill -x hping3 2>/dev/null || true
 sudo pkill -f '[p]acketin_attack.py' 2>/dev/null || true
 
 wait "$(cat "$OUT/collector.pid")" || true
+run_log "[INFO] Collector wait completed"
 
 "$SCRIPT_DIR/cleanup.sh" --out "$OUT" >> "$OUT/experiment.log" 2>&1 || true
 
@@ -238,4 +267,5 @@ if [ "$IPERF" = "on" ] && [ -n "$IPERF_SERVER_PREFIX" ]; then
 fi
 
 echo "experiment_end=$(date -Iseconds)" >> "$OUT/experiment.log"
+run_log "[INFO] Run completed successfully"
 echo "done: $OUT"
