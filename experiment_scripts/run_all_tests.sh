@@ -129,8 +129,14 @@ if is_probable_dataplane_ip "$TRUSTED_HOST" || is_probable_dataplane_ip "$ATTACK
   exit 2
 fi
 
-SSH_OPTS="-n -T -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new"
-SCP_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new"
+STRICT_HOST_KEY_MODE="accept-new"
+if ! ssh -o StrictHostKeyChecking=accept-new -G localhost >/dev/null 2>&1; then
+  STRICT_HOST_KEY_MODE="no"
+  echo "[WARN] SSH client does not support StrictHostKeyChecking=accept-new; falling back to StrictHostKeyChecking=no"
+fi
+
+SSH_OPTS="-n -T -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=$STRICT_HOST_KEY_MODE"
+SCP_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=$STRICT_HOST_KEY_MODE"
 
 SSH_TRUSTED="ssh $SSH_OPTS $USER_NAME@$TRUSTED_HOST"
 SSH_ATTACKER="ssh $SSH_OPTS $USER_NAME@$ATTACKER_HOST"
