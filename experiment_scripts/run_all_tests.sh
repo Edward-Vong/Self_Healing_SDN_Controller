@@ -199,6 +199,30 @@ CMD_PREFIX_ATTACK="ssh $SSH_OPTS $USER_NAME@$ATTACKER_HOST"
 CMD_PREFIX_VALID="ssh $SSH_OPTS $USER_NAME@$TRUSTED_HOST"
 CMD_PREFIX_IPERF="ssh $SSH_OPTS $USER_NAME@$VICTIM_HOST"
 
+clear_remote_ovs_flows() {
+  if [ "$CLEAR_OVS_MODE" = "off" ]; then
+    return
+  fi
+
+  local br
+  local target
+  local host_cmd
+
+  log_stage "[INFO] Clearing OVS flow tables on remote nodes (mode=$CLEAR_OVS_MODE, bridges=$OVS_SWITCHES)"
+  for target in trusted attacker victim; do
+    case "$target" in
+      trusted) host_cmd="$SSH_TRUSTED" ;;
+      attacker) host_cmd="$SSH_ATTACKER" ;;
+      victim) host_cmd="$SSH_VICTIM" ;;
+      *) continue ;;
+    esac
+
+    for br in $OVS_SWITCHES; do
+      $host_cmd "sudo ovs-vsctl br-exists '$br' && sudo ovs-ofctl -O OpenFlow13 del-flows '$br' || true" >/dev/null 2>&1 || true
+    done
+  done
+}
+
 log_stage "[INFO] Verifying SSH connectivity"
 $SSH_TRUSTED "hostname"
 $SSH_ATTACKER "hostname"
@@ -267,9 +291,9 @@ run_main_experiment() {
   local size="$5"
 
   log_stage "[INFO] Starting run: $name (duration ${DURATION}s + setup/recovery)."
-  log_stage "[INFO] Reminder: clear OVS flows manually on each switch host if needed before this run."
+  clear_remote_ovs_flows
 
-  bash "$SCRIPT_DIR/run_experiment.sh" \
+  RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
     --name "$name" \
     --rate "$rate" \
     --size "$size" \
@@ -288,7 +312,7 @@ run_main_experiment() {
     --valid-cmd-prefix "$CMD_PREFIX_VALID" \
     --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
     --iperf on \
-    --clear-ovs "$CLEAR_OVS_MODE" \
+    --clear-ovs off \
     --user "$USER_NAME" \
     --trusted "$TRUSTED_HOST" \
     --attacker "$ATTACKER_HOST" \
@@ -325,6 +349,7 @@ run_baseline_no_attack_once() {
   local attempt="$1"
   local iperf_mode="$2"
   log_stage "[INFO] baseline_no_attack attempt=$attempt iperf=$iperf_mode"
+  clear_remote_ovs_flows
   set +e
   RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
     --name baseline_no_attack \
@@ -344,7 +369,7 @@ run_baseline_no_attack_once() {
     --valid-cmd-prefix "$CMD_PREFIX_VALID" \
     --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
     --iperf "$iperf_mode" \
-    --clear-ovs "$CLEAR_OVS_MODE" \
+    --clear-ovs off \
     --user "$USER_NAME" \
     --trusted "$TRUSTED_HOST" \
     --attacker "$ATTACKER_HOST" \
