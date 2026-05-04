@@ -60,6 +60,7 @@ ATTACK_IFACE="ovs-lan2"
 SCAPY_RATE=1200
 HPING_RATE=10000
 THRESHOLD_OVERRIDE=""
+FAILED_RUNS=""
 
 log_stage() {
   CURRENT_STAGE="$*"
@@ -289,10 +290,12 @@ run_main_experiment() {
   local mitigation="$3"
   local method="$4"
   local size="$5"
+  local attempt_rc=0
 
   log_stage "[INFO] Starting run: $name (duration ${DURATION}s + setup/recovery)."
   clear_remote_ovs_flows
 
+  set +e
   RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
     --name "$name" \
     --rate "$rate" \
@@ -317,9 +320,56 @@ run_main_experiment() {
     --trusted "$TRUSTED_HOST" \
     --attacker "$ATTACKER_HOST" \
     --victim "$VICTIM_HOST" \
-    --project-dir "$PROJECT_DIR_VAL"
+    --project-dir "$PROJECT_DIR_VAL" \
+    2>&1 | tee -a "$RESULTS_DIR/${name}.driver.log"
+  attempt_rc=${PIPESTATUS[0]}
+  set -e
 
-  log_stage "[INFO] Completed run: $name"
+  if [ "$attempt_rc" -ne 0 ] && { [ "$attempt_rc" -eq 143 ] || [ "$attempt_rc" -eq 137 ]; }; then
+    log_stage "[WARN] Run $name failed with signal-style exit $attempt_rc; retrying once with iperf off"
+    clear_remote_ovs_flows
+    set +e
+    RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
+      --name "${name}_retry" \
+      --rate "$rate" \
+      --size "$size" \
+      --duration "$DURATION" \
+      --attack-delay "$ATTACK_DELAY" \
+      --attack-length "$ATTACK_LENGTH" \
+      --mitigation "$mitigation" \
+      --threshold "$THRESHOLD" \
+      --attack-method "$method" \
+      --attack-iface "$ATTACK_IFACE" \
+      --attack-target "$VICTIM_DATA_IP" \
+      --valid-target "$VICTIM_DATA_IP" \
+      --controller "$CONTROLLER_URL" \
+      --controller-iface "$CONTROLLER_IFACE_VAL" \
+      --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
+      --valid-cmd-prefix "$CMD_PREFIX_VALID" \
+      --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
+      --iperf off \
+      --clear-ovs off \
+      --user "$USER_NAME" \
+      --trusted "$TRUSTED_HOST" \
+      --attacker "$ATTACKER_HOST" \
+      --victim "$VICTIM_HOST" \
+      --project-dir "$PROJECT_DIR_VAL" \
+      2>&1 | tee -a "$RESULTS_DIR/${name}.driver.log"
+    attempt_rc=${PIPESTATUS[0]}
+    set -e
+  fi
+
+  if [ "$attempt_rc" -ne 0 ]; then
+    log_stage "[WARN] Run $name failed with exit code $attempt_rc; continuing to next run"
+    show_run_debug_tail "$name"
+    if [ -z "$FAILED_RUNS" ]; then
+      FAILED_RUNS="$name:$attempt_rc"
+    else
+      FAILED_RUNS="$FAILED_RUNS,$name:$attempt_rc"
+    fi
+  else
+    log_stage "[INFO] Completed run: $name"
+  fi
 }
 
 show_run_debug_tail() {
@@ -438,5 +488,13 @@ python3 "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/su
 
 log_stage "[DONE] Full experiment suite complete"
 log_stage "[DONE] Results directory: $RESULTS_DIR"
-write_status "success" "0" "run_all_tests completed successfully"
-write_status_file "success" 0 "done" "completed"
+if [ -n "$FAILED_RUNS" ]; then
+  log_stage "[WARN] Some runs failed but suite continued: $FAILED_RUNS"
+  write_status "partial" "0" "run_all_tests completed with failed runs: $FAILED_RUNS"
+  write_status_file "partial" 0 "done" "completed with failed runs: $FAILED_RUNS"
+  echo "FINAL_RESULT=partial"
+else
+  write_status "success" "0" "run_all_tests completed successfully"
+  write_status_file "success" 0 "done" "completed"
+  echo "FINAL_RESULT=success"
+fi

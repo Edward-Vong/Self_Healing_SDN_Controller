@@ -128,6 +128,30 @@ run_log() {
   fi
 }
 
+sleep_with_progress() {
+  local total="$1"
+  local label="$2"
+  local step=15
+  local elapsed=0
+  local remaining=0
+
+  if [ -z "$total" ] || [ "$total" -le 0 ] 2>/dev/null; then
+    return
+  fi
+
+  while [ "$elapsed" -lt "$total" ]; do
+    remaining=$((total - elapsed))
+    if [ "$remaining" -lt "$step" ]; then
+      sleep "$remaining"
+      elapsed=$total
+    else
+      sleep "$step"
+      elapsed=$((elapsed + step))
+    fi
+    run_log "[INFO] ${label} progress ${elapsed}/${total}s"
+  done
+}
+
 on_term() {
   run_log "[ERROR] Received SIGTERM/SIGINT; ATTACK_DELAY=$ATTACK_DELAY ATTACK_DURATION=${ATTACK_DURATION:-unset}"
   ps -o pid,ppid,pgid,sid,comm,args -p $$ >> "$OUT/experiment.log" 2>/dev/null || true
@@ -201,7 +225,7 @@ done
 append_event "valid_traffic_started" "$VALID_MODE" || true
 run_log "[INFO] Valid traffic launched (mode=$VALID_MODE)"
 
-sleep "$ATTACK_DELAY"
+sleep_with_progress "$ATTACK_DELAY" "attack_delay"
 run_log "[INFO] Attack delay phase completed"
 
 if [ -n "$ATTACK_LENGTH" ]; then
@@ -220,6 +244,7 @@ PY_CHECK
 if [ "$RUN_ATTACK" = "yes" ]; then
   append_event "attack_started" "$ATTACK_METHOD" || true
 
+  ATTACK_LAUNCH_RC=0
   if [ -n "$ATTACK_TARGET" ]; then
     "$SCRIPT_DIR/start_attack.sh" \
       --rate "$RATE" \
@@ -230,7 +255,7 @@ if [ "$RUN_ATTACK" = "yes" ]; then
       --cmd-prefix "$CMD_PREFIX_ATTACK" \
       --method "$ATTACK_METHOD" \
       --iface "$ATTACK_IFACE" \
-      --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1
+      --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
   else
     "$SCRIPT_DIR/start_attack.sh" \
       --rate "$RATE" \
@@ -241,15 +266,19 @@ if [ "$RUN_ATTACK" = "yes" ]; then
       --cmd-prefix "$CMD_PREFIX_ATTACK" \
       --method "$ATTACK_METHOD" \
       --iface "$ATTACK_IFACE" \
-      --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1
+      --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
   fi
 
-  sleep "$ATTACK_DURATION"
+  if [ "$ATTACK_LAUNCH_RC" -ne 0 ]; then
+    run_log "[WARN] start_attack.sh exited with code $ATTACK_LAUNCH_RC; continuing run for diagnostics"
+  fi
+
+  sleep_with_progress "$ATTACK_DURATION" "attack_window"
   append_event "attack_ended" "$ATTACK_METHOD" || true
 else
   echo "[INFO] No attack launched because rate=$RATE or attack duration=$ATTACK_DURATION" >> "$OUT/experiment.log"
   run_log "[INFO] No attack launched; sleeping attack window ATTACK_DURATION=$ATTACK_DURATION"
-  sleep "$ATTACK_DURATION"
+  sleep_with_progress "$ATTACK_DURATION" "attack_window"
 fi
 
 # Stop local attack processes only.
