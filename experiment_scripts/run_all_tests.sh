@@ -40,6 +40,10 @@ SCAPY_RATE=1200
 HPING_RATE=10000
 THRESHOLD_OVERRIDE=""
 
+log_stage() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
 usage() {
   cat <<EOF
 Usage: $0 [options]
@@ -149,22 +153,22 @@ CMD_PREFIX_IPERF="ssh $SSH_OPTS $USER_NAME@$VICTIM_HOST"
 RESULTS_DIR="$ROOT_DIR/results"
 mkdir -p "$RESULTS_DIR"
 
-echo "[INFO] Verifying SSH connectivity"
+log_stage "[INFO] Verifying SSH connectivity"
 $SSH_TRUSTED "hostname"
 $SSH_ATTACKER "hostname"
 $SSH_VICTIM "hostname"
 
-echo "[INFO] Verifying controller API at $CONTROLLER_URL"
+log_stage "[INFO] Verifying controller API at $CONTROLLER_URL"
 curl -fsS "$CONTROLLER_URL/stats" >/dev/null
 
-echo "[INFO] Ensuring packetin_attack.py exists on attacker"
+log_stage "[INFO] Ensuring packetin_attack.py exists on attacker"
 $SSH_ATTACKER "mkdir -p '$PROJECT_DIR_VAL/experiment_scripts'"
 scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJECT_DIR_VAL/experiment_scripts/packetin_attack.py" >/dev/null
 
 THRESHOLD="${THRESHOLD_OVERRIDE}"
 
 if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
-  echo "[INFO] Running baseline control collection"
+  log_stage "[INFO] Running baseline control collection (about 180s)"
   $SSH_VICTIM "nohup iperf -s >/tmp/iperf_server_control.log 2>&1 < /dev/null &" || true
   $SSH_TRUSTED "nohup ping -i 0.5 -w 180 '$VICTIM_DATA_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
   $SSH_TRUSTED "nohup iperf -c '$VICTIM_DATA_IP' -t 180 >/tmp/iperf_control.log 2>&1 < /dev/null &"
@@ -177,16 +181,16 @@ if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
     --baseline
 
   THRESHOLD="$(python3 -c "import json; d=json.load(open('$RESULTS_DIR/control_normal_traffic/baseline_summary.json')); print(int((d['packet_in_rate']['max'] or 0) * 3))")"
-  echo "[INFO] Derived threshold=$THRESHOLD"
+  log_stage "[INFO] Derived threshold=$THRESHOLD"
 elif [ -z "$THRESHOLD" ]; then
   THRESHOLD=300
-  echo "[WARN] Baseline skipped and no threshold override provided; using fallback threshold=$THRESHOLD"
+  log_stage "[WARN] Baseline skipped and no threshold override provided; using fallback threshold=$THRESHOLD"
 else
-  echo "[INFO] Using provided threshold=$THRESHOLD"
+  log_stage "[INFO] Using provided threshold=$THRESHOLD"
 fi
 
 if [ "$RUN_SATURATION" = "on" ]; then
-  echo "[INFO] Running saturation finder"
+  log_stage "[INFO] Running saturation finder"
   python3 "$SCRIPT_DIR/saturation_finder.py" \
     --controller "$CONTROLLER_URL" \
     --out "$RESULTS_DIR/saturation_analysis" \
@@ -207,9 +211,8 @@ run_main_experiment() {
   local method="$4"
   local size="$5"
 
-  python3 - <<'PY'
-print('[INFO] Reminder: clear OVS flows manually on each switch host if needed before this run.')
-PY
+  log_stage "[INFO] Starting run: $name (duration ${DURATION}s + setup/recovery)."
+  log_stage "[INFO] Reminder: clear OVS flows manually on each switch host if needed before this run."
 
   bash "$SCRIPT_DIR/run_experiment.sh" \
     --name "$name" \
@@ -236,9 +239,11 @@ PY
     --attacker "$ATTACKER_HOST" \
     --victim "$VICTIM_HOST" \
     --project-dir "$PROJECT_DIR_VAL"
+
+  log_stage "[INFO] Completed run: $name"
 }
 
-echo "[INFO] Running threshold tuning baseline"
+log_stage "[INFO] Running threshold tuning baseline (quiet period expected: about ${DURATION}s)"
 bash "$SCRIPT_DIR/run_experiment.sh" \
   --name baseline_no_attack \
   --rate 0 \
@@ -263,35 +268,36 @@ bash "$SCRIPT_DIR/run_experiment.sh" \
   --attacker "$ATTACKER_HOST" \
   --victim "$VICTIM_HOST" \
   --project-dir "$PROJECT_DIR_VAL"
+log_stage "[INFO] Completed threshold tuning baseline"
 
 if [ "$RUN_CORE" = "on" ]; then
-  echo "[INFO] Running core comparison suite"
+  log_stage "[INFO] Running core comparison suite"
   run_main_experiment "hping_attack_mit_off" "$HPING_RATE" off hping3 64
   run_main_experiment "hping_attack_mit_on" "$HPING_RATE" on hping3 64
   run_main_experiment "scapy_attack_mit_on" "$SCAPY_RATE" on scapy 64
 fi
 
 if [ "$RUN_SWEEPS" = "on" ]; then
-  echo "[INFO] Running scapy rate sweep"
+  log_stage "[INFO] Running scapy rate sweep"
   for r in 600 900 1200 1500 3000 5000 10000; do
     run_main_experiment "rate_${r}_scapy_mit_on" "$r" on scapy 64
   done
 
-  echo "[INFO] Running scapy packet size sweep"
+  log_stage "[INFO] Running scapy packet size sweep"
   for s in 64 256 512; do
     run_main_experiment "size_${s}_scapy_mit_on" "$SCAPY_RATE" on scapy "$s"
   done
 fi
 
-echo "[INFO] Generating per-run plots"
+log_stage "[INFO] Generating per-run plots"
 for d in "$RESULTS_DIR"/*; do
   [ -d "$d" ] || continue
   [ -f "$d/config.json" ] || continue
   python3 "$SCRIPT_DIR/plot_results.py" "$d"
 done
 
-echo "[INFO] Generating cross-run summary"
+log_stage "[INFO] Generating cross-run summary"
 python3 "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary"
 
-echo "[DONE] Full experiment suite complete"
-echo "[DONE] Results directory: $RESULTS_DIR"
+log_stage "[DONE] Full experiment suite complete"
+log_stage "[DONE] Results directory: $RESULTS_DIR"
