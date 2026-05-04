@@ -9,7 +9,7 @@ def get_json(base, path):
 def read_iface_bytes(iface):
     if not iface:
         return None
-    base = f'/sys/class/net/{iface}/statistics'
+    base = '/sys/class/net/{}/statistics'.format(iface)
     try:
         with open(os.path.join(base,'rx_bytes')) as f: rx=int(f.read().strip())
         with open(os.path.join(base,'tx_bytes')) as f: tx=int(f.read().strip())
@@ -63,12 +63,22 @@ def write_baseline_summary(out, pir_samples, cpu_samples, false_positive_count, 
     with open(path, 'w') as f:
         json.dump(summary, f, indent=2)
     print("\n=== Baseline Summary ===")
-    print(f"  Packet-In rate  — mean: {summary['packet_in_rate']['mean']}  min: {summary['packet_in_rate']['min']}  max: {summary['packet_in_rate']['max']}  stddev: {summary['packet_in_rate']['stddev']}")
-    print(f"  CPU %           — mean: {summary['controller_cpu_percent']['mean']}  min: {summary['controller_cpu_percent']['min']}  max: {summary['controller_cpu_percent']['max']}  stddev: {summary['controller_cpu_percent']['stddev']}")
-    print(f"  False-positive mitigation triggers: {false_positive_count} / {total_samples} samples")
+    print("  Packet-In rate  - mean: {}  min: {}  max: {}  stddev: {}".format(
+        summary['packet_in_rate']['mean'],
+        summary['packet_in_rate']['min'],
+        summary['packet_in_rate']['max'],
+        summary['packet_in_rate']['stddev'],
+    ))
+    print("  CPU %           - mean: {}  min: {}  max: {}  stddev: {}".format(
+        summary['controller_cpu_percent']['mean'],
+        summary['controller_cpu_percent']['min'],
+        summary['controller_cpu_percent']['max'],
+        summary['controller_cpu_percent']['stddev'],
+    ))
+    print("  False-positive mitigation triggers: {} / {} samples".format(false_positive_count, total_samples))
     suggested_threshold = (summary['packet_in_rate']['max'] or 0) * 3
-    print(f"  Suggested threshold (max x3): {round(suggested_threshold, 1)}")
-    print(f"  Saved: {path}\n")
+    print("  Suggested threshold (max x3): {}".format(round(suggested_threshold, 1)))
+    print("  Saved: {}\n".format(path))
 
 def main():
     p=argparse.ArgumentParser()

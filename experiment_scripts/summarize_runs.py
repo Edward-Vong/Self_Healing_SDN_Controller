@@ -43,12 +43,12 @@ def maxv(values):
 
 
 def parse_ping_csv_or_log(run_dir, name):
-    csv_path = run_dir / f"{name}.csv"
+    csv_path = run_dir / "{}.csv".format(name)
     rows = read_csv(csv_path)
     if rows:
         return [(fnum(r.get("t")), fnum(r.get("rtt_ms"))) for r in rows]
 
-    log_path = run_dir / f"{name}.log"
+    log_path = run_dir / "{}.log".format(name)
     if not log_path.exists():
         return []
     out = []
@@ -63,7 +63,7 @@ def parse_ping_csv_or_log(run_dir, name):
 
 
 def parse_iperf_log(run_dir, name):
-    path = run_dir / f"{name}.log"
+    path = run_dir / "{}.log".format(name)
     if not path.exists():
         return []
     vals = []
@@ -194,12 +194,12 @@ def main():
         ("avg_iperf_existing_mbps", "existing trusted throughput (Mbits/sec)"),
         ("mitigated_drop_count", "total mitigated drops"),
     ]:
-        out = out_dir / f"rate_vs_{ykey}.png"
+        out = out_dir / "rate_vs_{}.png".format(ykey)
         ok = plot_xy(
             rows,
             "rate",
             ykey,
-            f"Rate sweep: {ykey}",
+            "Rate sweep: {}".format(ykey),
             ylabel,
             out,
             lambda r: r.get("mitigation") == "on" and fnum(r.get("size")) == 64,
@@ -215,12 +215,12 @@ def main():
         ("avg_rtt_new_attack_ms", "new trusted RTT during attack (ms)"),
         ("avg_iperf_existing_mbps", "existing trusted throughput (Mbits/sec)"),
     ]:
-        out = out_dir / f"size_vs_{ykey}.png"
+        out = out_dir / "size_vs_{}.png".format(ykey)
         ok = plot_xy(
             rows,
             "size",
             ykey,
-            f"Packet size sweep: {ykey}",
+            "Packet size sweep: {}".format(ykey),
             ylabel,
             out,
             lambda r: r.get("mitigation") == "on" and fnum(r.get("rate")) == 10000,

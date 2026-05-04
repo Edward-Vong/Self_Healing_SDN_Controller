@@ -30,7 +30,7 @@ def random_mac():
 
 
 def random_ip(prefix="10.0.0.", start=50, end=250):
-    return f"{prefix}{random.randint(start, end)}"
+    return "{}{}".format(prefix, random.randint(start, end))
 
 
 def write_log(path, rows):
@@ -79,7 +79,7 @@ def run_scapy(args):
             time.sleep(delay)
 
     write_log(args.log, rows)
-    print(f"packetin_attack method=scapy sent_packets={sent}", flush=True)
+    print("packetin_attack method=scapy sent_packets={}".format(sent), flush=True)
 
 
 def run_udp(args):
@@ -111,7 +111,7 @@ def run_udp(args):
 
     sock.close()
     write_log(args.log, rows)
-    print(f"packetin_attack method=udp sent_packets={sent}", flush=True)
+    print("packetin_attack method=udp sent_packets={}".format(sent), flush=True)
 
 
 def parse_args():

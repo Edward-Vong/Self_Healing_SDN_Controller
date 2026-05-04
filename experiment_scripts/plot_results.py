@@ -218,7 +218,7 @@ def main():
         has_ping = False
 
         for name, offset in [('ping_existing', 0), ('ping_new', valid_new_delay)]:
-            log = os.path.join(d, f'{name}.log')
+            log = os.path.join(d, '{}.log'.format(name))
             rows = []
 
             if os.path.exists(log):
@@ -235,7 +235,7 @@ def main():
 
             if rows:
                 has_ping = True
-                csvp = os.path.join(d, f'{name}.csv')
+                csvp = os.path.join(d, '{}.csv'.format(name))
                 with open(csvp, 'w', newline='') as f:
                     w = csv.DictWriter(f, fieldnames=['t', 'rtt_ms'])
                     w.writeheader()
@@ -320,11 +320,11 @@ def main():
     plt.figure(figsize=(14, 6))
     has_iperf = False
     for log_name, label, offset in iperf_series:
-        rows = parse_iperf_log(os.path.join(d, f'{log_name}.log'), offset)
+        rows = parse_iperf_log(os.path.join(d, '{}.log'.format(log_name)), offset)
         if not rows:
             continue
         has_iperf = True
-        csvp = os.path.join(d, f'{log_name}.csv')
+        csvp = os.path.join(d, '{}.csv'.format(log_name))
         with open(csvp, 'w', newline='') as f:
             w = csv.DictWriter(f, fieldnames=['t', 'mbps'])
             w.writeheader()

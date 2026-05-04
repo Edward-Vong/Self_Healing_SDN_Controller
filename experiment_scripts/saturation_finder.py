@@ -19,32 +19,32 @@ import time
 
 def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, iface, size=64):
     """Run attack at a single rate; return avg RTT and max CPU."""
-    run_dir = os.path.join(out_dir, f"rate_{rate}_pps")
+    run_dir = os.path.join(out_dir, "rate_{}_pps".format(rate))
     os.makedirs(run_dir, exist_ok=True)
     
     # Prepare attack command
     if attack_method == "scapy":
         attack_cmd = (
-            f"sudo python3 packetin_attack.py --method scapy --iface {iface} "
-            f"--rate {rate} --size {size} --duration {duration} --target {target}"
+            "sudo python3 packetin_attack.py --method scapy --iface {} "
+            "--rate {} --size {} --duration {} --target {}".format(iface, rate, size, duration, target)
         )
     elif attack_method == "hping3":
         attack_cmd = (
-            f"timeout {duration} bash -lc 'for p in 9991 9992 9993; do "
-            f"sudo hping3 --udp --flood --rand-source -d {size} -p $p {target} & done; wait'"
+            "timeout {} bash -lc 'for p in 9991 9992 9993; do "
+            "sudo hping3 --udp --flood --rand-source -d {} -p $p {} & done; wait'".format(duration, size, target)
         )
     else:
         attack_cmd = (
-            f"python3 packetin_attack.py --method udp --rate {rate} "
-            f"--size {size} --duration {duration} --target {target}"
+            "python3 packetin_attack.py --method udp --rate {} "
+            "--size {} --duration {} --target {}".format(rate, size, duration, target)
         )
     
     if cmd_prefix:
-        attack_cmd = f"{cmd_prefix} {attack_cmd}"
+        attack_cmd = "{} {}".format(cmd_prefix, attack_cmd)
     
     # Start attack in background
     attack_log = os.path.join(run_dir, "attack.log")
-    print(f"  Starting attack at {rate} pps for {duration}s...")
+    print("  Starting attack at {} pps for {}s...".format(rate, duration))
     subprocess.Popen(
         attack_cmd,
         shell=True,
@@ -56,8 +56,8 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
     ping_log = os.path.join(run_dir, "ping.log")
     ping_interval = 0.5
     ping_count = int(duration / ping_interval)
-    ping_cmd = f"ping -i {ping_interval} -c {ping_count} -s 56 {target}"
-    print(f"  Running ping for RTT measurement...")
+    ping_cmd = "ping -i {} -c {} -s 56 {}".format(ping_interval, ping_count, target)
+    print("  Running ping for RTT measurement...")
     subprocess.run(ping_cmd, shell=True, stdout=open(ping_log, 'w'), stderr=subprocess.STDOUT)
     
     # Parse ping results
@@ -73,7 +73,7 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
                 if m:
                     packet_loss = float(m.group(1))
     except Exception as e:
-        print(f"    Error parsing ping: {e}")
+        print("    Error parsing ping: {}".format(e))
     
     avg_rtt = sum(rtt_values) / len(rtt_values) if rtt_values else None
     min_rtt = min(rtt_values) if rtt_values else None
@@ -118,20 +118,20 @@ def main():
         print("ERROR: --rates must be comma-separated integers")
         sys.exit(1)
     
-    print(f"\nSaturation Finder")
-    print(f"================")
-    print(f"Target: {args.target}")
-    print(f"Attack method: {args.attack_method}")
-    print(f"Rates to test: {rates} pps")
-    print(f"Step duration: {args.step_duration}s")
-    print(f"RTT saturation threshold: {args.rtt_threshold_ms}ms")
-    print(f"Packet loss saturation threshold: {args.loss_threshold_percent}%\n")
+    print("\nSaturation Finder")
+    print("================")
+    print("Target: {}".format(args.target))
+    print("Attack method: {}".format(args.attack_method))
+    print("Rates to test: {} pps".format(rates))
+    print("Step duration: {}s".format(args.step_duration))
+    print("RTT saturation threshold: {}ms".format(args.rtt_threshold_ms))
+    print("Packet loss saturation threshold: {}%\n".format(args.loss_threshold_percent))
     
     results = []
     saturation_rate = None
     
     for rate in rates:
-        print(f"Testing {rate} pps...")
+        print("Testing {} pps...".format(rate))
         result = run_rate_step(
             rate=rate,
             duration=args.step_duration,
@@ -143,16 +143,16 @@ def main():
         )
         results.append(result)
         
-        print(f"  Avg RTT: {result['avg_rtt_ms']}ms  Packet loss: {result['packet_loss_percent']}%")
+        print("  Avg RTT: {}ms  Packet loss: {}%".format(result['avg_rtt_ms'], result['packet_loss_percent']))
         
         # Check for saturation
         if result['avg_rtt_ms'] and result['avg_rtt_ms'] > args.rtt_threshold_ms:
-            print(f"  *** SATURATION DETECTED: RTT exceeded {args.rtt_threshold_ms}ms ***")
+            print("  *** SATURATION DETECTED: RTT exceeded {}ms ***".format(args.rtt_threshold_ms))
             saturation_rate = rate
             break
         
         if result['packet_loss_percent'] > args.loss_threshold_percent:
-            print(f"  *** SATURATION DETECTED: Packet loss exceeded {args.loss_threshold_percent}% ***")
+            print("  *** SATURATION DETECTED: Packet loss exceeded {}% ***".format(args.loss_threshold_percent))
             saturation_rate = rate
             break
     
@@ -170,10 +170,10 @@ def main():
     with open(report_path, 'w') as f:
         json.dump(report, f, indent=2)
     
-    print(f"\n=== Saturation Report ===")
-    print(f"Saturation detected at: {saturation_rate} pps" if saturation_rate else "No saturation detected")
-    print(f"Safe maximum rate: {report['safe_maximum_attack_rate']} pps")
-    print(f"Report saved: {report_path}\n")
+    print("\n=== Saturation Report ===")
+    print("Saturation detected at: {} pps".format(saturation_rate) if saturation_rate else "No saturation detected")
+    print("Safe maximum rate: {} pps".format(report['safe_maximum_attack_rate']))
+    print("Report saved: {}\n".format(report_path))
 
 
 if __name__ == '__main__':
