@@ -6,3 +6,4 @@ __pycache__
 experiments_scripts/results/*
 testing_docs/cloudlab_test_commands.txt
 testing_docs/testing_methodology.txt
+testing_docs/export.txt
