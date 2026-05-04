@@ -57,6 +57,14 @@ while [ $# -gt 0 ]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load switch config
+SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
+if [ -f "$SWITCHES_CONF" ]; then
+  . "$SWITCHES_CONF"
+fi
+OVS_SWITCHES="${OVS_SWITCHES:-s1 s2 s3 s4}"
+
 if [ -z "$REMOTE_SCRIPT_DIR" ]; then
   REMOTE_SCRIPT_DIR="$SCRIPT_DIR"
 fi
@@ -98,7 +106,7 @@ curl -s -X POST "$CONTROLLER/config/reset" >> "$OUT/experiment.log" 2>&1 || true
 
 if [ "$CLEAR_OVS" = "on" ] || [ "$CLEAR_OVS" = "auto" ]; then
   echo "[INFO] Clearing local OVS flow tables if Mininet switches exist..." >> "$OUT/experiment.log"
-  for sw in s1 s2 s3 s4; do
+  for sw in $OVS_SWITCHES; do
     sudo ovs-ofctl -O OpenFlow13 del-flows "$sw" >> "$OUT/experiment.log" 2>&1 || true
   done
 fi
