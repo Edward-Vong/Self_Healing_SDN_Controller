@@ -4,6 +4,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
+STATUS_FILE="$ROOT_DIR/results/last_run_status.json"
+CURRENT_STAGE="startup"
+
+RESULTS_DIR="$ROOT_DIR/results"
+mkdir -p "$RESULTS_DIR"
+
+RUN_STARTED_AT="$(date -Iseconds)"
+STATUS_FILE="$RESULTS_DIR/last_run_status.txt"
+
+write_status_file() {
+  local status="$1"
+  local code="$2"
+  local stage="$3"
+  local message="$4"
+  mkdir -p "$(dirname "$STATUS_FILE")"
+  # Write both a human-readable .txt and a machine-readable .json.
+  local json_file="$RESULTS_DIR/last_run_status.json"
+  cat > "$json_file" <<EOF_JSON
+{"status":"$status","exit_code":$code,"stage":"$stage","message":"$message","timestamp":"$(date -Iseconds)"}
+EOF_JSON
+}
 
 if [ -f "$SWITCHES_CONF" ]; then
   # shellcheck disable=SC1090
@@ -41,8 +62,36 @@ HPING_RATE=10000
 THRESHOLD_OVERRIDE=""
 
 log_stage() {
+  CURRENT_STAGE="$*"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
+
+write_status() {
+  local status="$1"
+  local code="$2"
+  local message="$3"
+  {
+    echo "status=$status"
+    echo "exit_code=$code"
+    echo "started_at=$RUN_STARTED_AT"
+    echo "finished_at=$(date -Iseconds)"
+    echo "message=$message"
+  } > "$STATUS_FILE"
+}
+
+on_err() {
+  local code=$?
+  local line_no="${BASH_LINENO[0]:-unknown}"
+  local cmd="${BASH_COMMAND:-unknown}"
+  log_stage "[ERROR] run_all_tests failed at line $line_no with exit code $code"
+  log_stage "[ERROR] Failing command: $cmd"
+  write_status "failed" "$code" "line=$line_no command=$cmd"
+  exit "$code"
+}
+
+trap on_err ERR
+write_status "running" "0" "run_all_tests started"
+write_status_file "running" 0 "startup" "run_all_tests started"
 
 usage() {
   cat <<EOF
@@ -150,9 +199,6 @@ CMD_PREFIX_ATTACK="ssh $SSH_OPTS $USER_NAME@$ATTACKER_HOST"
 CMD_PREFIX_VALID="ssh $SSH_OPTS $USER_NAME@$TRUSTED_HOST"
 CMD_PREFIX_IPERF="ssh $SSH_OPTS $USER_NAME@$VICTIM_HOST"
 
-RESULTS_DIR="$ROOT_DIR/results"
-mkdir -p "$RESULTS_DIR"
-
 log_stage "[INFO] Verifying SSH connectivity"
 $SSH_TRUSTED "hostname"
 $SSH_ATTACKER "hostname"
@@ -180,8 +226,16 @@ if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
     --iface "$CONTROLLER_IFACE_VAL" \
     --baseline
 
-  THRESHOLD="$(python3 -c "import json; d=json.load(open('$RESULTS_DIR/control_normal_traffic/baseline_summary.json')); print(int((d['packet_in_rate']['max'] or 0) * 3))")"
+  THRESHOLD="$(python3 -c "import json; d=json.load(open('$RESULTS_DIR/control_normal_traffic/baseline_summary.json')); print(int((d['packet_in_rate']['max'] or 0) * 3))" 2>/dev/null)" || {
+    THRESHOLD=300
+    log_stage "[WARN] Could not read baseline_summary.json; using fallback threshold=$THRESHOLD"
+  }
   log_stage "[INFO] Derived threshold=$THRESHOLD"
+  # Enforce a minimum to avoid false-positive mitigation on all runs.
+  if [ "${THRESHOLD:-0}" -lt 50 ] 2>/dev/null; then
+    log_stage "[WARN] Derived threshold ($THRESHOLD) is dangerously low; raising to minimum 50"
+    THRESHOLD=50
+  fi
 elif [ -z "$THRESHOLD" ]; then
   THRESHOLD=300
   log_stage "[WARN] Baseline skipped and no threshold override provided; using fallback threshold=$THRESHOLD"
@@ -201,7 +255,8 @@ if [ "$RUN_SATURATION" = "on" ]; then
     --step-duration 30 \
     --rtt-threshold-ms 50 \
     --loss-threshold-percent 5 \
-    --rates 1000,5000,10000,20000,50000
+    --rates 1000,5000,10000,20000,50000 \
+    || log_stage "[WARN] Saturation finder failed; continuing (non-fatal)"
 fi
 
 run_main_experiment() {
@@ -293,11 +348,15 @@ log_stage "[INFO] Generating per-run plots"
 for d in "$RESULTS_DIR"/*; do
   [ -d "$d" ] || continue
   [ -f "$d/config.json" ] || continue
-  python3 "$SCRIPT_DIR/plot_results.py" "$d"
+  python3 "$SCRIPT_DIR/plot_results.py" "$d" \
+    || log_stage "[WARN] plot_results.py failed for $d; continuing (non-fatal)"
 done
 
 log_stage "[INFO] Generating cross-run summary"
-python3 "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary"
+python3 "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
+  || log_stage "[WARN] summarize_runs.py failed; continuing (non-fatal)"
 
 log_stage "[DONE] Full experiment suite complete"
 log_stage "[DONE] Results directory: $RESULTS_DIR"
+write_status "success" "0" "run_all_tests completed successfully"
+write_status_file "success" 0 "done" "completed"

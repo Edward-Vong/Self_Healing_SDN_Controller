@@ -45,12 +45,13 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
     # Start attack in background
     attack_log = os.path.join(run_dir, "attack.log")
     print("  Starting attack at {} pps for {}s...".format(rate, duration))
-    subprocess.Popen(
-        attack_cmd,
-        shell=True,
-        stdout=open(attack_log, 'w'),
-        stderr=subprocess.STDOUT
-    )
+    with open(attack_log, 'w') as attack_log_fh:
+        subprocess.Popen(
+            attack_cmd,
+            shell=True,
+            stdout=attack_log_fh,
+            stderr=subprocess.STDOUT
+        )
     
     # Run ping in background to measure RTT
     ping_log = os.path.join(run_dir, "ping.log")

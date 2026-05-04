@@ -11,11 +11,17 @@ import json
 import os
 import re
 import statistics
+import sys
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _HAS_MPL = True
+except ImportError:
+    _HAS_MPL = False
+    print("[WARN] matplotlib not available; cross-run plots will be skipped", flush=True)
 
 
 def read_csv(path):
@@ -148,6 +154,8 @@ def write_summary(rows, out_dir):
 
 
 def plot_xy(rows, xkey, ykey, title, ylabel, out_path, filter_fn):
+    if not _HAS_MPL:
+        return False
     data = [r for r in rows if filter_fn(r)]
     data = sorted(data, key=lambda r: fnum(r.get(xkey)))
     if len(data) < 2:
@@ -180,7 +188,8 @@ def main():
                 rows.append(row)
 
     if not rows:
-        raise SystemExit("No result folders with config.json found.")
+        print("[WARN] No result folders with config.json found in {}; skipping summary.".format(root), file=sys.stderr)
+        return
 
     summary_csv = write_summary(rows, out_dir)
     made = [summary_csv]

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-import argparse, csv, os, math
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+import argparse, csv, os, math, sys
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    _HAS_MPL = True
+except ImportError:
+    print('[WARN] matplotlib not available; skipping plots', flush=True)
+    sys.exit(0)
 
 def read_csv(path):
     if not os.path.exists(path): return []
@@ -197,87 +202,85 @@ def main():
         made.append(path)
     
     if link and save_line(link,'t',['total_mbps','rx_mbps','tx_mbps'],['total Mbps','rx Mbps','tx Mbps'],'Controller link utilization over time','Mbps',os.path.join(out,'controller_link_util_over_time.png')): made.append(os.path.join(out,'controller_link_util_over_time.png'))
-    # parse ping RTT logs
-    
-    for name in ('ping_existing','ping_new'):
-        # combined RTT graph for existing + new legitimate traffic
-        import json, re
+    # parse ping RTT logs — one combined plot covering both existing and new legitimate traffic flows
+    import json, re
 
-        config_path = os.path.join(d, 'config.json')
-        attack_delay = 0
-        valid_new_delay = 10
-        ping_interval = 0.5
+    config_path = os.path.join(d, 'config.json')
+    attack_delay = 0
+    valid_new_delay = 10
+    ping_interval = 0.5
 
-        if os.path.exists(config_path):
-            with open(config_path) as cf:
-                cfg = json.load(cf)
-                attack_delay = float(cfg.get('attack_delay', 0) or 0)
-                valid_new_delay = float(cfg.get('valid_new_delay', 10) or 10)
+    if os.path.exists(config_path):
+        with open(config_path) as cf:
+            cfg = json.load(cf)
+            attack_delay = float(cfg.get('attack_delay', 0) or 0)
+            valid_new_delay = float(cfg.get('valid_new_delay', 10) or 10)
 
-        plt.figure()
-        has_ping = False
+    plt.figure()
+    has_ping = False
 
-        for name, offset in [('ping_existing', 0), ('ping_new', valid_new_delay)]:
-            log = os.path.join(d, '{}.log'.format(name))
-            rows = []
+    for name, offset in [('ping_existing', 0), ('ping_new', valid_new_delay)]:
+        log = os.path.join(d, '{}.log'.format(name))
+        rows = []
 
-            if os.path.exists(log):
-                idx = 0
-                with open(log, errors='ignore') as f:
-                    for line in f:
-                        m = re.search(r'time=([0-9.]+)\s*ms', line)
-                        if m:
-                            rows.append({
-                                't': offset + idx * ping_interval,
-                                'rtt_ms': float(m.group(1))
-                            })
-                            idx += 1
+        if os.path.exists(log):
+            idx = 0
+            with open(log, errors='ignore') as f:
+                for line in f:
+                    m = re.search(r'time=([0-9.]+)\s*ms', line)
+                    if m:
+                        rows.append({
+                            't': offset + idx * ping_interval,
+                            'rtt_ms': float(m.group(1))
+                        })
+                        idx += 1
 
-            if rows:
-                has_ping = True
-                csvp = os.path.join(d, '{}.csv'.format(name))
-                with open(csvp, 'w', newline='') as f:
-                    w = csv.DictWriter(f, fieldnames=['t', 'rtt_ms'])
-                    w.writeheader()
-                    w.writerows(rows)
+        if rows:
+            has_ping = True
+            csvp = os.path.join(d, '{}.csv'.format(name))
+            with open(csvp, 'w', newline='') as f:
+                w = csv.DictWriter(f, fieldnames=['t', 'rtt_ms'])
+                w.writeheader()
+                w.writerows(rows)
 
-                label = 'existing trusted flow' if name == 'ping_existing' else 'new trusted flow'
-                plt.plot([r['t'] for r in rows], [r['rtt_ms'] for r in rows], label=label)
+            label = 'existing trusted flow' if name == 'ping_existing' else 'new trusted flow'
+            plt.plot([r['t'] for r in rows], [r['rtt_ms'] for r in rows], label=label)
 
-        if has_ping:
-            plt.axvline(attack_delay, linestyle='--', label='attack starts')
+    if has_ping:
+        plt.axvline(attack_delay, linestyle='--', label='attack starts')
 
-            ev_times = event_times(events, ['mitigation_active'])
-            if 'mitigation_active' in ev_times:
-                plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
+        ev_times = event_times(events, ['mitigation_active'])
+        if 'mitigation_active' in ev_times:
+            plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
 
-            mitigation_inactive_time = None
-            if status:
-                for i in range(len(status)-1):
-                    curr_active = boolish(status[i].get('mitigation_active', False))
-                    next_active = boolish(status[i+1].get('mitigation_active', False))
-                    if curr_active and not next_active:
-                        mitigation_inactive_time = num(status[i+1], 't')
-                        break
-            if mitigation_inactive_time is not None:
-                plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
+        mitigation_inactive_time = None
+        if status:
+            for i in range(len(status)-1):
+                curr_active = boolish(status[i].get('mitigation_active', False))
+                next_active = boolish(status[i+1].get('mitigation_active', False))
+                if curr_active and not next_active:
+                    mitigation_inactive_time = num(status[i+1], 't')
+                    break
+        if mitigation_inactive_time is not None:
+            plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
 
-            plt.xlabel('time (s)')
-            plt.ylabel('RTT ms')
-            plt.title('Legitimate Traffic RTT During Attack and Recovery')
-            plt.grid(True)
-            plt.legend()
-            plt.tight_layout()
-            
-            # Widen the figure by adjusting it before saving
-            fig = plt.gcf()
-            fig.set_size_inches(14, 6)
-            plt.tight_layout()
+        plt.xlabel('time (s)')
+        plt.ylabel('RTT ms')
+        plt.title('Legitimate Traffic RTT During Attack and Recovery')
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
 
-            path = os.path.join(out, 'legitimate_rtt_combined.png')
-            plt.savefig(path)
-            plt.close()
-            made.append(path)
+        fig = plt.gcf()
+        fig.set_size_inches(14, 6)
+        plt.tight_layout()
+
+        path = os.path.join(out, 'legitimate_rtt_combined.png')
+        plt.savefig(path)
+        plt.close()
+        made.append(path)
+    else:
+        plt.close()
     
 
     # parse iperf throughput logs for trusted traffic

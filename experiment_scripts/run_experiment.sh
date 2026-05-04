@@ -171,8 +171,9 @@ for _ in 1 2 3 4 5; do
   sleep 0.2
 done
 
-"$SCRIPT_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1
-append_event "valid_traffic_started" "$VALID_MODE"
+"$SCRIPT_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1 \
+  || echo "[WARN] start_valid_flows exited non-zero; legitimate traffic may be absent" >> "$OUT/experiment.log"
+append_event "valid_traffic_started" "$VALID_MODE" || true
 
 sleep "$ATTACK_DELAY"
 
@@ -190,7 +191,7 @@ PY_CHECK
 )
 
 if [ "$RUN_ATTACK" = "yes" ]; then
-  append_event "attack_started" "$ATTACK_METHOD"
+  append_event "attack_started" "$ATTACK_METHOD" || true
 
   if [ -n "$ATTACK_TARGET" ]; then
     "$SCRIPT_DIR/start_attack.sh" \
@@ -217,7 +218,7 @@ if [ "$RUN_ATTACK" = "yes" ]; then
   fi
 
   sleep "$ATTACK_DURATION"
-  append_event "attack_ended" "$ATTACK_METHOD"
+  append_event "attack_ended" "$ATTACK_METHOD" || true
 else
   echo "[INFO] No attack launched because rate=$RATE or attack duration=$ATTACK_DURATION" >> "$OUT/experiment.log"
   sleep "$ATTACK_DURATION"
