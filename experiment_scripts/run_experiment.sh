@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 NAME="test1"
 RATE=1200
 SIZE=64
@@ -25,6 +27,20 @@ IPERF_SERVER_PREFIX=""
 THRESHOLD=""
 REMOTE_SCRIPT_DIR=""
 CLEAR_OVS=auto
+
+# Optional topology defaults loaded from switches.conf.
+USER=""
+TRUSTED=""
+ATTACKER=""
+VICTIM=""
+PROJECT_DIR=""
+
+# Load switch and CloudLab defaults first, then allow CLI args to override them.
+SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
+if [ -f "$SWITCHES_CONF" ]; then
+  . "$SWITCHES_CONF"
+fi
+OVS_SWITCHES="${OVS_SWITCHES:-s1 s2 s3 s4}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -51,29 +67,46 @@ while [ $# -gt 0 ]; do
     --attack-iface) ATTACK_IFACE="$2"; shift 2;;
     --attack-length) ATTACK_LENGTH="$2"; shift 2;;
     --remote-script-dir) REMOTE_SCRIPT_DIR="$2"; shift 2;;
+    --user) USER="$2"; shift 2;;
+    --trusted) TRUSTED="$2"; shift 2;;
+    --attacker) ATTACKER="$2"; shift 2;;
+    --victim) VICTIM="$2"; shift 2;;
+    --project-dir) PROJECT_DIR="$2"; shift 2;;
     --clear-ovs) CLEAR_OVS="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# Load switch config
-SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
-if [ -f "$SWITCHES_CONF" ]; then
-  . "$SWITCHES_CONF"
+# Derive practical defaults so routine CloudLab runs need fewer flags.
+if [ -z "$ATTACK_TARGET" ] && [ -n "$VICTIM" ]; then
+  ATTACK_TARGET="$VICTIM"
 fi
-OVS_SWITCHES="${OVS_SWITCHES:-s1 s2 s3 s4}"
+
+if [ -n "$USER" ] && [ -n "$ATTACKER" ] && [ -z "$CMD_PREFIX_ATTACK" ]; then
+  CMD_PREFIX_ATTACK="ssh $USER@$ATTACKER"
+fi
+
+if [ -n "$USER" ] && [ -n "$TRUSTED" ] && [ -z "$CMD_PREFIX_VALID" ]; then
+  CMD_PREFIX_VALID="ssh $USER@$TRUSTED"
+fi
+
+if [ -n "$USER" ] && [ -n "$VICTIM" ] && [ -z "$IPERF_SERVER_PREFIX" ]; then
+  IPERF_SERVER_PREFIX="ssh $USER@$VICTIM"
+fi
 
 if [ -z "$REMOTE_SCRIPT_DIR" ]; then
-  REMOTE_SCRIPT_DIR="$SCRIPT_DIR"
+  if [ -n "$PROJECT_DIR" ]; then
+    REMOTE_SCRIPT_DIR="$PROJECT_DIR/experiment_scripts"
+  else
+    REMOTE_SCRIPT_DIR="$SCRIPT_DIR"
+  fi
 fi
 
 OUT="$OUT_BASE/${NAME}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 
 cat > "$OUT/config.json" <<EOF_JSON
-{"name":"$NAME","rate":$RATE,"size":$SIZE,"duration":$DURATION,"mitigation":"$MITIGATION","controller":"$CONTROLLER","attack_target":"$ATTACK_TARGET","attack_target_prefix":"$ATTACK_TARGET_PREFIX","valid_target":"$VALID_TARGET","controller_iface":"$CONTROLLER_IFACE","valid_mode":"$VALID_MODE","valid_new_delay":$VALID_NEW_DELAY,"attack_delay":$ATTACK_DELAY,"iperf":"$IPERF","threshold":"$THRESHOLD","attack_method":"$ATTACK_METHOD","attack_iface":"$ATTACK_IFACE","attack_length":"$ATTACK_LENGTH","remote_script_dir":"$REMOTE_SCRIPT_DIR"}
+{"name":"$NAME","rate":$RATE,"size":$SIZE,"duration":$DURATION,"mitigation":"$MITIGATION","controller":"$CONTROLLER","attack_target":"$ATTACK_TARGET","attack_target_prefix":"$ATTACK_TARGET_PREFIX","valid_target":"$VALID_TARGET","controller_iface":"$CONTROLLER_IFACE","valid_mode":"$VALID_MODE","valid_new_delay":$VALID_NEW_DELAY,"attack_delay":$ATTACK_DELAY,"iperf":"$IPERF","threshold":"$THRESHOLD","attack_method":"$ATTACK_METHOD","attack_iface":"$ATTACK_IFACE","attack_length":"$ATTACK_LENGTH","remote_script_dir":"$REMOTE_SCRIPT_DIR","user":"$USER","trusted":"$TRUSTED","attacker":"$ATTACKER","victim":"$VICTIM","project_dir":"$PROJECT_DIR"}
 EOF_JSON
 
 {
