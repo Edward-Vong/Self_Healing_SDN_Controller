@@ -242,6 +242,7 @@ def run_flat(args, fh):
 
         mitigation_obj = metrics.get("mitigation", {}) if isinstance(metrics, dict) else {}
         escalated = flatten_escalated_ports(mitigation_obj.get("escalated_ports", {}))
+        recovery_mode = bool(mitigation_obj.get("recovery_mode", False))
 
         samples += 1
         pi_sum += pi_rate
@@ -293,12 +294,12 @@ def run_flat(args, fh):
             normal_start = None
 
         phase = "NORMAL"
-        if mitigation_active and escalated:
+        if recovery_mode:
+            phase = "RECOVERY"
+        elif mitigation_active and escalated:
             phase = "LOCKDOWN"
         elif mitigation_active:
             phase = "METERING"
-        elif saw_mitigation_active and not saw_back_to_normal:
-            phase = "RECOVERY"
         log("  phase={}".format(phase), fh)
 
         # Full end-to-end transition reached.

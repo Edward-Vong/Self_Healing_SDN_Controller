@@ -21,6 +21,7 @@ from config import (
     ESCALATION_THRESHOLD_SECONDS,
     HOLDDOWN_WINDOWS,
     MITIGATION_MIN_ACTIVE_WINDOWS,
+    RECOVERY_QUIET_WINDOWS,
 )
 
 from rest_controller import RestController
@@ -80,8 +81,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.last_detection_time = None
         self.attack_clear_time = None  # When rate first dropped below threshold
+        self.recovery_eligible_time = None  # Earliest time recovery may begin after quiet period
         self.mitigation_latch_until = 0.0  # Keep mitigation engaged briefly after detection/clear
         self.mitigation_min_active_seconds = max(1.0, MITIGATION_MIN_ACTIVE_WINDOWS * WINDOW_SECONDS)
+        self.recovery_quiet_seconds = max(1.0, RECOVERY_QUIET_WINDOWS * WINDOW_SECONDS)
         self._last_status_update = 0.0
 
         # Mitigation state
@@ -113,6 +116,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.last_detection_time = None
         self.attack_clear_time = None
+        self.recovery_eligible_time = None
         self.mitigation_latch_until = 0.0
         self._last_status_update = 0.0
         self.manual_mitigation = False
@@ -185,6 +189,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if self.manual_mitigation:
             self.attack_detected = True
             self.attack_clear_time = None
+            self.recovery_eligible_time = None
             self.mitigation_latch_until = max(self.mitigation_latch_until, now + self.mitigation_min_active_seconds)
             return
 
@@ -197,6 +202,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
                 self.last_detection_time = now
             self.attack_detected = True
             self.attack_clear_time = None  # Reset hold-down clock while still attacking
+            self.recovery_eligible_time = None
             self.mitigation_latch_until = max(self.mitigation_latch_until, now + self.mitigation_min_active_seconds)
 
             # If attack returns during recovery, abort recovery and keep mitigation posture.
@@ -208,6 +214,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
                 # Rate just dropped; start or continue the hold-down timer
                 if self.attack_clear_time is None:
                     self.attack_clear_time = now
+                    self.recovery_eligible_time = now + self.recovery_quiet_seconds
                     self.mitigation_latch_until = max(self.mitigation_latch_until, now + self.mitigation_min_active_seconds)
                 elif now - self.attack_clear_time >= holddown_seconds:
                     self.attack_detected = False
@@ -221,9 +228,12 @@ class SelfHealingSDNController(app_manager.RyuApp):
             and not self.attack_detected
             and not self.recovery_manager.is_recovering()
             and now >= self.mitigation_latch_until
+            and self.recovery_eligible_time is not None
+            and now >= self.recovery_eligible_time
         ):
             # Attack just ended, enter recovery
             self.recovery_manager.enter_recovery()
+            self.recovery_eligible_time = None
         
         # Tick recovery if enabled
         if self.recovery_manager.is_recovering():
