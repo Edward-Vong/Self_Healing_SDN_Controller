@@ -12,7 +12,12 @@ def read_iface_stats(iface):
     if not iface:
         return None
     base = '/sys/class/net/{}/statistics'.format(iface)
-    fields = ('rx_bytes', 'tx_bytes', 'rx_dropped', 'tx_dropped', 'rx_errors', 'tx_errors')
+    fields = (
+        'rx_bytes', 'tx_bytes',
+        'rx_packets', 'tx_packets',
+        'rx_dropped', 'tx_dropped',
+        'rx_errors', 'tx_errors'
+    )
     result = {}
     try:
         for field in fields:
@@ -214,12 +219,13 @@ def main():
     mw=csv.DictWriter(mf, fieldnames=['t','timestamp','packet_in_total','packet_in_rate','packet_in_threshold','controller_cpu_percent','connected_switches','known_hosts','learned_mac_entries','learned_flow_install_count','packet_out_count','mitigation_enabled','mitigation_active','attack_detected','manual_mitigation','mitigated_drop_count'])
     sw=csv.DictWriter(sf, fieldnames=['t','timestamp','attack_detected','mitigation_active','manual_mitigation','packet_in_rate','threshold_rate','attack_detection_time','mitigation_start_time'])
     gw=csv.DictWriter(gf, fieldnames=['t','timestamp','mitigated_drop_count','dropped_unknown_count','dropped_overrate_count','dropped_unknown_destination_count','trusted_source_count','source_seen_count_total','mitigated_source_count','rate_limited_ports_count','escalated_ports_count'])
-    lw=csv.DictWriter(lf, fieldnames=['t','timestamp','iface','rx_mbps','tx_mbps','total_mbps','rx_bytes','tx_bytes','rx_dropped','tx_dropped','rx_errors','tx_errors'])
+    lw=csv.DictWriter(lf, fieldnames=['t','timestamp','iface','rx_pps','tx_pps','total_pps','rx_packets','tx_packets','rx_mbps','tx_mbps','total_mbps','rx_bytes','tx_bytes','rx_dropped','tx_dropped','rx_errors','tx_errors'])
     ew=csv.DictWriter(ef, fieldnames=['event','t','timestamp','value'])
     for w in (mw,sw,gw,lw,ew): w.writeheader()
     start=time.time(); prev_iface_stats=read_iface_stats(args.iface); prev_time=start
     # Track previous state for each flag so every on/off transition is recorded.
     prev_threshold_crossed=False; prev_detected=False; prev_mitigated=False
+    prev_rate_limited_ports=0; prev_escalated_ports=0
     pir_samples=[]; cpu_samples=[]; false_positive_count=0; total_samples=0
 
     # Start switch RTT prober if IPs were provided.
@@ -245,6 +251,22 @@ def main():
             sw.writerow(srow); sf.flush()
             grow=flat_mitigation(mit); grow.update({'t':round(t,3),'timestamp':round(now,6)})
             gw.writerow(grow); gf.flush()
+
+            cur_rate_limited_ports = int(grow.get('rate_limited_ports_count', 0) or 0)
+            cur_escalated_ports = int(grow.get('escalated_ports_count', 0) or 0)
+
+            if cur_rate_limited_ports > 0 and prev_rate_limited_ports == 0:
+                ew.writerow({'event': 'metering_started', 't': round(t,3), 'timestamp': round(now,6), 'value': cur_rate_limited_ports}); ef.flush()
+            elif cur_rate_limited_ports == 0 and prev_rate_limited_ports > 0:
+                ew.writerow({'event': 'metering_cleared', 't': round(t,3), 'timestamp': round(now,6), 'value': cur_rate_limited_ports}); ef.flush()
+
+            if cur_escalated_ports > 0 and prev_escalated_ports == 0:
+                ew.writerow({'event': 'escalation_started', 't': round(t,3), 'timestamp': round(now,6), 'value': cur_escalated_ports}); ef.flush()
+            elif cur_escalated_ports == 0 and prev_escalated_ports > 0:
+                ew.writerow({'event': 'escalation_cleared', 't': round(t,3), 'timestamp': round(now,6), 'value': cur_escalated_ports}); ef.flush()
+
+            prev_rate_limited_ports = cur_rate_limited_ports
+            prev_escalated_ports = cur_escalated_ports
             if args.baseline:
                 pir=float(status.get('packet_in_rate',stats.get('packet_in_rate',0)) or 0)
                 cpu=float(stats.get('controller_cpu_percent',0) or 0)
@@ -272,8 +294,13 @@ def main():
             dt=max(0.001, now-prev_time)
             drx=cur_iface_stats['rx_bytes']-prev_iface_stats['rx_bytes']
             dtx=cur_iface_stats['tx_bytes']-prev_iface_stats['tx_bytes']
+            drxp=cur_iface_stats['rx_packets']-prev_iface_stats['rx_packets']
+            dtxp=cur_iface_stats['tx_packets']-prev_iface_stats['tx_packets']
             lw.writerow({
                 't':round(t,3),'timestamp':round(now,6),'iface':args.iface,
+                'rx_pps':round(drxp/dt,4),'tx_pps':round(dtxp/dt,4),
+                'total_pps':round((drxp+dtxp)/dt,4),
+                'rx_packets':cur_iface_stats['rx_packets'],'tx_packets':cur_iface_stats['tx_packets'],
                 'rx_mbps':round(drx*8/dt/1e6,4),'tx_mbps':round(dtx*8/dt/1e6,4),
                 'total_mbps':round((drx+dtx)*8/dt/1e6,4),
                 'rx_bytes':cur_iface_stats['rx_bytes'],'tx_bytes':cur_iface_stats['tx_bytes'],

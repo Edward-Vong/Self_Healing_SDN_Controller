@@ -28,6 +28,28 @@ def event_times(events, names):
             times[name] = num(e, "t")
     return times
 
+
+def add_transition_markers(events):
+    styles = {
+        'threshold_crossed': {'color': 'red', 'label': 'threshold_crossed'},
+        'attack_detected': {'color': 'orange', 'label': 'attack_detected'},
+        'mitigation_active': {'color': 'green', 'label': 'mitigation_active'},
+        'attack_ended': {'color': 'blue', 'label': 'attack_ended'},
+        'metering_started': {'color': 'purple', 'label': 'metering_started'},
+        'metering_cleared': {'color': 'purple', 'label': 'metering_cleared'},
+        'escalation_started': {'color': 'brown', 'label': 'escalation_started'},
+        'escalation_cleared': {'color': 'brown', 'label': 'escalation_cleared'},
+    }
+    drawn = set()
+    for e in events:
+        name = e.get('event')
+        if name not in styles:
+            continue
+        style = styles[name]
+        label = style['label'] if name not in drawn else None
+        plt.axvline(num(e, 't'), linestyle=':', color=style['color'], label=label)
+        drawn.add(name)
+
 def _csv(d, name):
     """Resolve a CSV/JSON data file: prefer csv/ subdir (post-run), fall back to root."""
     sub = os.path.join(d, 'csv', name)
@@ -110,17 +132,7 @@ def main():
         plt.plot(xs,ys,label='Packet-In rate')
         thr=[num(r,'threshold_rate') for r in status_plot if r.get('threshold_rate') not in ('',None)]
         if thr: plt.axhline(thr[0], linestyle='--', label='Threshold')
-
-        event_colors = {
-            'threshold_crossed': 'red',
-            'attack_detected': 'orange',
-            'mitigation_active': 'green',
-            'attack_ended': 'blue'
-        }
-        for e in events:
-            if e.get('event') in ('attack_detected','threshold_crossed','mitigation_active','attack_ended'):
-                color = event_colors.get(e.get('event'), 'gray')
-                plt.axvline(num(e,'t'), linestyle=':', color=color, label=e.get('event'))
+        add_transition_markers(events)
 
         mitigation_inactive_time = None
         for i in range(len(status_plot)-1):
@@ -144,17 +156,7 @@ def main():
         ys = [num(r, 'controller_cpu_percent') for r in metrics_plot]
 
         plt.plot(xs, ys, label='CPU %')
-
-        ev_times = event_times(events, ['threshold_crossed', 'attack_detected', 'mitigation_active', 'attack_ended'])
-        event_colors = {
-            'threshold_crossed': 'red',
-            'attack_detected': 'orange',
-            'mitigation_active': 'green',
-            'attack_ended': 'blue'
-        }
-        for label, t in ev_times.items():
-            color = event_colors.get(label, 'gray')
-            plt.axvline(t, linestyle=':', color=color, label=label)
+        add_transition_markers(events)
 
         mitigation_inactive_time = None
         if status_plot:
@@ -256,7 +258,44 @@ def main():
         made.append(path)
     
     lutil_png=os.path.join(out,'controller_link_util_over_time.png')
-    if link_plot and save_line(link_plot,'t',['total_mbps','rx_mbps','tx_mbps'],['total Mbps','rx Mbps','tx Mbps'],'Controller link utilization over time','Mbps',lutil_png): made.append(lutil_png)
+    if link_plot:
+        plt.figure()
+        xs=[num(r,'t') for r in link_plot]
+        has_pps = any((r.get('total_pps') not in ('', None) for r in link_plot))
+        all_vals=[]
+
+        if has_pps:
+            total=[num(r,'total_pps') for r in link_plot]
+            rx=[num(r,'rx_pps') for r in link_plot]
+            tx=[num(r,'tx_pps') for r in link_plot]
+            plt.plot(xs,total,label='total pps')
+            plt.plot(xs,rx,label='rx pps')
+            plt.plot(xs,tx,label='tx pps')
+            all_vals.extend(total + rx + tx)
+            ylabel='pps'
+            title='Controller link packet rate over time'
+        else:
+            total=[num(r,'total_mbps') for r in link_plot]
+            rx=[num(r,'rx_mbps') for r in link_plot]
+            tx=[num(r,'tx_mbps') for r in link_plot]
+            plt.plot(xs,total,label='total Mbps')
+            plt.plot(xs,rx,label='rx Mbps')
+            plt.plot(xs,tx,label='tx Mbps')
+            all_vals.extend(total + rx + tx)
+            ylabel='Mbps'
+            title='Controller link utilization over time (legacy)'
+
+        add_transition_markers(events)
+        _smart_ylim(all_vals)
+        plt.xlabel('time (s)')
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(lutil_png)
+        plt.close()
+        made.append(lutil_png)
     # parse ping RTT logs — one combined plot covering both existing and new legitimate traffic flows
     import json, re
 

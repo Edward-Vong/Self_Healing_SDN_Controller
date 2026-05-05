@@ -383,8 +383,16 @@ class SelfHealingSDNController(app_manager.RyuApp):
         dpid = datapath.id
         in_port = msg.match['in_port']
 
-        pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
+        try:
+            pkt = packet.Packet(msg.data)
+            eth_list = pkt.get_protocols(ethernet.ethernet)
+            if not eth_list:
+                return None
+            eth = eth_list[0]
+        except Exception as e:
+            # Some malformed tunneled packets can trigger parser assertions in ryu.
+            self.logger.warning("Skipping malformed packet on dpid=%s port=%s: %s", dpid, in_port, e)
+            return None
 
         ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
         src_ip = ipv4_pkt.src if ipv4_pkt else None
@@ -607,6 +615,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         # parse packet + context
         ctx = self.parse_packet_content(msg)
+        if ctx is None:
+            return
 
         # Process the packet
         self._process_packet(ctx, msg)

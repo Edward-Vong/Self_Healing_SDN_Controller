@@ -193,6 +193,8 @@ append_event() {
 
 # reset and configure controller if reachable
 curl -s -X POST "$CONTROLLER/config/reset" >> "$OUT/experiment.log" 2>&1 || true
+curl -s -X POST "$CONTROLLER/trust/clear" >> "$OUT/experiment.log" 2>&1 || true
+curl -s -X POST "$CONTROLLER/mitigate/end" >> "$OUT/experiment.log" 2>&1 || true
 run_log "[INFO] Controller reset/config endpoints attempted"
 
 if [ "$CLEAR_OVS" = "on" ] || [ "$CLEAR_OVS" = "auto" ]; then

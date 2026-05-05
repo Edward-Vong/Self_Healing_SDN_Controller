@@ -49,6 +49,11 @@ ATTACK_LENGTH=60
 ATTACK_IFACE="${ATTACK_IFACE:-eth1}"
 SCAPY_RATE=1200
 HPING_RATE=10000
+SATURATION_ATTACK_METHOD="scapy"
+SATURATION_STEP_DURATION=15
+SATURATION_RATES="1000,5000,10000,20000,50000"
+SATURATION_MITIGATION_MODE="off"
+SATURATION_SIZE=256
 THRESHOLD_OVERRIDE=""
 THRESHOLD_SET_BY_USER=0
 FAILED_RUNS=""
@@ -121,6 +126,11 @@ Options:
   --attack-length SEC          Attack duration inside each run (default: $ATTACK_LENGTH)
   --hping-rate PPS             Hping label rate (default: $HPING_RATE)
   --scapy-rate PPS             Scapy PPS (default: $SCAPY_RATE)
+  --saturation-attack-method M Saturation method: hping3|scapy|udp (default: $SATURATION_ATTACK_METHOD)
+  --saturation-step-duration S Saturation step duration seconds (default: $SATURATION_STEP_DURATION)
+  --saturation-rates CSV       Saturation rates CSV, pps (default: $SATURATION_RATES)
+  --saturation-mitigation-mode M  Saturation mitigation mode: keep|on|off (default: $SATURATION_MITIGATION_MODE)
+  --saturation-size BYTES      Saturation packet size bytes (default: $SATURATION_SIZE)
   --threshold N                Skip baseline threshold extraction and use N
   --run-baseline-control       Run baseline collect_metrics stage (uses derived threshold unless --threshold is also provided)
   --skip-baseline-control      Skip baseline collect_metrics stage
@@ -155,6 +165,11 @@ while [ $# -gt 0 ]; do
     --attack-length) ATTACK_LENGTH="$2"; shift 2 ;;
     --hping-rate) HPING_RATE="$2"; shift 2 ;;
     --scapy-rate) SCAPY_RATE="$2"; shift 2 ;;
+    --saturation-attack-method) SATURATION_ATTACK_METHOD="$2"; shift 2 ;;
+    --saturation-step-duration) SATURATION_STEP_DURATION="$2"; shift 2 ;;
+    --saturation-rates) SATURATION_RATES="$2"; shift 2 ;;
+    --saturation-mitigation-mode) SATURATION_MITIGATION_MODE="$2"; shift 2 ;;
+    --saturation-size) SATURATION_SIZE="$2"; shift 2 ;;
     --threshold) THRESHOLD_OVERRIDE="$2"; THRESHOLD_SET_BY_USER=1; shift 2 ;;
     --run-baseline-control) RUN_BASELINE_CONTROL=on; shift ;;
     --skip-baseline-control) RUN_BASELINE_CONTROL=off; shift ;;
@@ -221,6 +236,32 @@ SSH_VICTIM="ssh $SSH_OPTS $USER_NAME@$VICTIM_HOST"
 CMD_PREFIX_ATTACK="ssh $SSH_OPTS $USER_NAME@$ATTACKER_HOST"
 CMD_PREFIX_VALID="ssh $SSH_OPTS $USER_NAME@$TRUSTED_HOST"
 CMD_PREFIX_IPERF="ssh $SSH_OPTS $USER_NAME@$VICTIM_HOST"
+
+reset_controller_state() {
+  local mitigation_mode="${1:-keep}"
+  local payload
+
+  log_stage "[INFO] Resetting controller state (mode=$mitigation_mode)"
+  curl -fsS -X POST "$CONTROLLER_URL/config/reset" >/dev/null || true
+  curl -fsS -X POST "$CONTROLLER_URL/trust/clear" >/dev/null || true
+  curl -fsS -X POST "$CONTROLLER_URL/mitigate/end" >/dev/null || true
+
+  case "$mitigation_mode" in
+    on)
+      payload='{"enabled": true}'
+      curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$CONTROLLER_URL/config/mitigation" >/dev/null || true
+      ;;
+    off)
+      payload='{"enabled": false}'
+      curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$CONTROLLER_URL/config/mitigation" >/dev/null || true
+      ;;
+    keep)
+      ;;
+    *)
+      log_stage "[WARN] Unknown mitigation mode '$mitigation_mode' for reset_controller_state"
+      ;;
+  esac
+}
 
 clear_remote_ovs_flows() {
   if [ "$CLEAR_OVS_MODE" = "off" ]; then
@@ -381,6 +422,7 @@ scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJE
 THRESHOLD="${THRESHOLD_OVERRIDE}"
 
 if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
+  reset_controller_state off
   log_stage "[INFO] Running baseline control collection (about 90s)"
   $SSH_VICTIM "nohup iperf -s >/tmp/iperf_server_control.log 2>&1 < /dev/null &" || true
   $SSH_TRUSTED "nohup ping -i 0.5 -w 90 '$VALID_TARGET_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
@@ -411,26 +453,36 @@ else
 fi
 
 if [ "$RUN_SATURATION" = "on" ]; then
+  reset_controller_state "$SATURATION_MITIGATION_MODE"
   log_stage "[INFO] Running saturation finder"
   "$PYTHON_BIN" "$SCRIPT_DIR/saturation_finder.py" \
     --controller "$CONTROLLER_URL" \
     --out "$RESULTS_DIR/saturation_analysis" \
     --target "$VICTIM_DATA_IP" \
     --iface "$ATTACK_IFACE" \
-    --attack-method hping3 \
-    --size 256 \
+    --attack-method "$SATURATION_ATTACK_METHOD" \
+    --size "$SATURATION_SIZE" \
     --cmd-prefix "$SSH_ATTACKER" \
     --rtt-cmd-prefix "$SSH_TRUSTED" \
-    --step-duration 15 \
+    --step-duration "$SATURATION_STEP_DURATION" \
     --rtt-threshold-ms 50 \
     --loss-threshold-percent 5 \
-    --rates 1000,5000,10000,20000,50000 \
+    --rates "$SATURATION_RATES" \
+    --mitigation-mode "$SATURATION_MITIGATION_MODE" \
+    --controller-iface "$CONTROLLER_IFACE_VAL" \
+    --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
+    --python-bin "$ATTACKER_PYTHON_BIN" \
     || log_stage "[WARN] Saturation finder failed; continuing (non-fatal)"
 fi
 
 # Common run_experiment.sh invocation. Args: name rate size mitigation method attack_length iperf_mode
 _call_run_experiment() {
   local name="$1" rate="$2" size="$3" mitigation="$4" method="$5" attack_length="$6" iperf_mode="$7"
+  if [ "$mitigation" = "on" ]; then
+    reset_controller_state on
+  else
+    reset_controller_state off
+  fi
   RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
     --name "$name" \
     --rate "$rate" \

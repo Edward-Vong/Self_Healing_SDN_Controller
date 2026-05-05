@@ -1,5 +1,32 @@
 Run from repo root on controller node.
 
+Copy-paste commands (current topology and script flags)
+- Baseline + saturation enabled (default saturation behavior), 75s total run:
+
+```bash
+bash experiment_scripts/run_all_tests.sh \
+  --run-baseline-control \
+  --duration 75 \
+  --attack-length 60 \
+  --attack-delay 15 \
+  2>&1 | tee run_all_75s.log
+```
+
+- Baseline + saturation enabled, with 15s warmup + 60s attack + 15s cooldown:
+
+```bash
+bash experiment_scripts/run_all_tests.sh \
+  --run-baseline-control \
+  --duration 90 \
+  --attack-length 60 \
+  --attack-delay 15 \
+  2>&1 | tee run_all_90s.log
+```
+
+Notes:
+- Do not use `--run-saturation` (not a valid flag in this script).
+- Saturation runs by default unless `--skip-saturation` is passed.
+
 Current default behavior in run_all_tests.sh (fast profile):
 - attack-delay defaults to 0
 - baseline-control calibration stage is skipped by default
