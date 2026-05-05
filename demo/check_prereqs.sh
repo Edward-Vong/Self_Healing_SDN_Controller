@@ -16,6 +16,7 @@ ATTACKER_HOST="${ATTACKER:-}"
 VICTIM_HOST="${VICTIM:-}"
 CONTROLLER_URL="${CONTROLLER:-http://127.0.0.1:8080}"
 ATTACK_IFACE_VAL="${ATTACK_IFACE:-eth1}"
+TRUSTED_VALID_IFACE_VAL="${TRUSTED_VALID_IFACE:-eth2}"
 ATTACKER_PYTHON_BIN="${ATTACKER_PYTHON_BIN:-python3.8}"
 ATTACK_TARGET="${VICTIM_DATA_IP:-10.10.3.2}"
 VALID_TARGET="${VALID_TARGET_IP:-10.10.2.2}"
@@ -72,8 +73,8 @@ else
   run "$ATTACKER_HOST" "tail -5 /tmp/arp_demo_attack.log" || true
 fi
 
-if run "$TRUSTED_HOST" "arping -I eth1 -c 2 $VALID_TARGET >/tmp/arp_demo_valid.log 2>&1" && run "$TRUSTED_HOST" "grep -q 'Received [1-9]' /tmp/arp_demo_valid.log"; then
-  ok "trusted -> victim ARP (eth1 to $VALID_TARGET)"
+if run "$TRUSTED_HOST" "arping -I $TRUSTED_VALID_IFACE_VAL -c 2 $VALID_TARGET >/tmp/arp_demo_valid.log 2>&1" && run "$TRUSTED_HOST" "grep -q 'Received [1-9]' /tmp/arp_demo_valid.log"; then
+  ok "trusted -> victim ARP ($TRUSTED_VALID_IFACE_VAL to $VALID_TARGET)"
 else
   bad "trusted -> victim ARP failed"
   run "$TRUSTED_HOST" "tail -5 /tmp/arp_demo_valid.log" || true
