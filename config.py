@@ -16,9 +16,8 @@ LEARNING_PRIORITY = 1
 ATTACK_METER_RATE = 100  # Rate limit for attack flows (packets per second)
 ESCALATION_THRESHOLD_SECONDS = 8  # Escalate meter to drop quickly enough for the 45s demo
 RECOVERY_WINDOW_SECONDS = 8  # Total time for gradual recovery during the 45s demo
-HOLDDOWN_WINDOWS = 1  # Keep attack_detected=True for this many WINDOW_SECONDS after rate drops
 MITIGATION_MIN_ACTIVE_WINDOWS = 1  # Keep mitigation active for at least this many WINDOW_SECONDS once triggered
-RECOVERY_QUIET_WINDOWS = 1  # Require this many WINDOW_SECONDS of quiet before entering recovery
+RECOVERY_QUIET_WINDOWS = 2  # Require this many WINDOW_SECONDS of quiet before restoring normal mode
 
 
 def default_host_record():

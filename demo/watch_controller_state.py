@@ -243,7 +243,6 @@ def run_flat(args, fh):
 
         mitigation_obj = metrics.get("mitigation", {}) if isinstance(metrics, dict) else {}
         escalated = flatten_escalated_ports(mitigation_obj.get("escalated_ports", {}))
-        recovery_mode = bool(mitigation_obj.get("recovery_mode", False))
         controller_phase = metrics.get("phase") or mitigation_obj.get("phase")
 
         samples += 1
@@ -288,12 +287,8 @@ def run_flat(args, fh):
         prev_escalated = escalated
 
         phase = controller_phase if controller_phase else "NORMAL"
-        if phase == "RECOVERY":
-            phase = "METERING"
         if not controller_phase:
-            if recovery_mode:
-                phase = "METERING"
-            elif mitigation_active and escalated:
+            if mitigation_active and escalated:
                 phase = "LOCKDOWN"
             elif mitigation_active:
                 phase = "METERING"
@@ -354,7 +349,7 @@ def run_flat(args, fh):
         if not saw_back_to_meter:
             missing.append("metering after lockdown")
         if not saw_back_to_normal:
-            missing.append("normal after recovery")
+            missing.append("return to normal")
         log("RESULT: PARTIAL (missing: {})".format(", ".join(missing)), fh)
 
 
