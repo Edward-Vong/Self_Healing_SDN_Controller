@@ -212,7 +212,7 @@ def run_flat(args, fh):
     saw_back_to_normal = False
 
     normal_start = None
-    normal_hold_seconds = max(3.0, args.interval * 3)
+    normal_hold_seconds = max(1.5, args.interval * 1.5)
 
     log("Mode          : FLAT", fh)
     log("Target PPS    : {} pps".format(int(args.target_pps) if args.target_pps >= 1 else args.target_pps), fh)
