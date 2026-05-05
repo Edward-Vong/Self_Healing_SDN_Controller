@@ -237,7 +237,7 @@ for _ in 1 2 3 4 5; do
   sleep 0.2
 done
 
-"$SCRIPT_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1 \
+bash "$SCRIPT_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1 \
   || echo "[WARN] start_valid_flows exited non-zero; legitimate traffic may be absent" >> "$OUT/experiment.log"
 append_event "valid_traffic_started" "$VALID_MODE" || true
 run_log "[INFO] Valid traffic launched (mode=$VALID_MODE)"
@@ -263,7 +263,7 @@ if [ "$RUN_ATTACK" = "yes" ]; then
 
   ATTACK_LAUNCH_RC=0
   if [ -n "$ATTACK_TARGET" ]; then
-    "$SCRIPT_DIR/start_attack.sh" \
+    bash "$SCRIPT_DIR/start_attack.sh" \
       --rate "$RATE" \
       --size "$SIZE" \
       --duration "$ATTACK_DURATION" \
@@ -274,7 +274,7 @@ if [ "$RUN_ATTACK" = "yes" ]; then
       --iface "$ATTACK_IFACE" \
       --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
   else
-    "$SCRIPT_DIR/start_attack.sh" \
+    bash "$SCRIPT_DIR/start_attack.sh" \
       --rate "$RATE" \
       --size "$SIZE" \
       --duration "$ATTACK_DURATION" \
@@ -299,17 +299,16 @@ else
 fi
 
 # Stop local attack processes only.
-# Use exact process-name matching so we do not kill this script when args include "hping3".
-sudo pkill -x hping3 2>/dev/null || true
+sudo pkill -f hping3 2>/dev/null || true
 sudo pkill -f '[p]acketin_attack.py' 2>/dev/null || true
 
 wait "$(cat "$OUT/collector.pid")" || true
 run_log "[INFO] Collector wait completed"
 
-"$SCRIPT_DIR/cleanup.sh" --out "$OUT" >> "$OUT/experiment.log" 2>&1 || true
+bash "$SCRIPT_DIR/cleanup.sh" --out "$OUT" >> "$OUT/experiment.log" 2>&1 || true
 
 if [ "$IPERF" = "on" ] && [ -n "$IPERF_SERVER_PREFIX" ]; then
-  eval "$IPERF_SERVER_PREFIX pkill -f 'iperf -s'" >> "$OUT/experiment.log" 2>&1 || true
+  eval "$IPERF_SERVER_PREFIX 'pkill -f iperf'" >> "$OUT/experiment.log" 2>&1 || true
 fi
 
 echo "experiment_end=$(date -Iseconds)" >> "$OUT/experiment.log"

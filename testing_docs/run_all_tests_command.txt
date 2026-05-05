@@ -1,18 +1,23 @@
-Run from repo root on controller node:
+Run from repo root on controller node (switches.conf has all defaults, no extra args needed):
 
-bash -o pipefail -c "bash experiment_scripts/run_all_tests.sh \
+bash experiment_scripts/run_all_tests.sh 2>&1 | tee run_all.log
+
+--- OR explicit form with all values spelled out ---
+
+bash experiment_scripts/run_all_tests.sh \
   --controller http://128.110.223.12:8080 \
   --user viliang \
-  --trusted-host 128.110.223.8 \
-  --attacker-host 128.110.223.13 \
-  --victim-host 128.110.223.15 \
+  --trusted-host hpvm126-1.utah.cloudlab.us \
+  --attacker-host hpvm126-2.utah.cloudlab.us \
+  --victim-host hpvm126-3.utah.cloudlab.us \
   --trusted-data-ip 10.10.10.1 \
   --attacker-data-ip 10.10.10.2 \
   --victim-data-ip 10.10.10.3 \
   --project-dir /users/viliang/Self_Healing_SDN_Controller \
   --controller-iface eth0 \
   --attack-iface ovs-lan2 \
-  --clear-ovs on 2>&1 | tee run_all.log"
+  --clear-ovs on \
+  2>&1 | tee run_all.log
 
 Quick checks after run:
 - cat results/last_run_status.txt

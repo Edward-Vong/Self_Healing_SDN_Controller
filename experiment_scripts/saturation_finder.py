@@ -17,7 +17,7 @@ import sys
 import time
 
 
-def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, iface, size=64):
+def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, iface, size=64, rtt_cmd_prefix=''):
     """Run attack at a single rate; return avg RTT and max CPU."""
     run_dir = os.path.join(out_dir, "rate_{}_pps".format(rate))
     os.makedirs(run_dir, exist_ok=True)
@@ -53,11 +53,16 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
             stderr=subprocess.STDOUT
         )
     
-    # Run ping in background to measure RTT
+    # Run ping for RTT measurement. If rtt_cmd_prefix is provided (e.g. 'ssh user@trusted'),
+    # run the ping on that remote node so it probes the dataplane from inside the experiment LAN.
     ping_log = os.path.join(run_dir, "ping.log")
     ping_interval = 0.5
     ping_count = int(duration / ping_interval)
-    ping_cmd = "ping -i {} -c {} -s 56 {}".format(ping_interval, ping_count, target)
+    raw_ping = "ping -i {} -c {} -s 56 {}".format(ping_interval, ping_count, target)
+    if rtt_cmd_prefix:
+        ping_cmd = "{} '{}'".format(rtt_cmd_prefix, raw_ping)
+    else:
+        ping_cmd = raw_ping
     print("  Running ping for RTT measurement...")
     subprocess.run(ping_cmd, shell=True, stdout=open(ping_log, 'w'), stderr=subprocess.STDOUT)
     
@@ -102,6 +107,7 @@ def main():
     p.add_argument('--iface', required=True, help='Attacker interface (e.g. eth1)')
     p.add_argument('--attack-method', default='hping3', choices=['hping3', 'scapy', 'udp'])
     p.add_argument('--cmd-prefix', default='', help='SSH prefix for remote execution (e.g., ssh user@host)')
+    p.add_argument('--rtt-cmd-prefix', default='', help='SSH prefix for RTT ping (e.g., ssh user@trusted-node). If empty, ping runs locally on the controller.')
     p.add_argument('--step-duration', type=int, default=30, help='Duration per rate step (seconds)')
     p.add_argument('--rtt-threshold-ms', type=float, default=50, help='RTT threshold for saturation')
     p.add_argument('--loss-threshold-percent', type=float, default=5, help='Packet loss threshold for saturation')
@@ -141,6 +147,7 @@ def main():
             attack_method=args.attack_method,
             target=args.target,
             iface=args.iface,
+            rtt_cmd_prefix=args.rtt_cmd_prefix,
         )
         results.append(result)
         

@@ -49,9 +49,10 @@ case "$METHOD" in
     if [ -z "$TARGET" ]; then
       TARGET="10.0.0.3"
     fi
-    # hping3 flood: random source IPs + several UDP destination ports to increase flow diversity.
-    # --flood sends as fast as possible, so RATE is kept for labels/config but does not throttle hping3.
-    CMD="timeout '$DURATION' bash -lc 'for p in 9991 9992 9993 9994 9995; do sudo hping3 --udp --flood --rand-source -d '$SIZE' -p \$p '$TARGET' & done; wait'"
+    # hping3 flood: random source IPs to increase flow diversity.
+    # --flood sends as fast as possible; RATE is kept for labels/config but does not throttle hping3.
+    # Single invocation avoids shell-quoting issues when the command is sent through SSH via eval.
+    CMD="sudo timeout '$DURATION' hping3 --udp --flood --rand-source -d '$SIZE' -p 9991 '$TARGET'"
     ;;
   udp)
     if [ -n "$TARGET" ]; then

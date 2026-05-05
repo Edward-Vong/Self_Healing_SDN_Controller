@@ -277,6 +277,7 @@ if [ "$RUN_SATURATION" = "on" ]; then
     --iface "$ATTACK_IFACE" \
     --attack-method scapy \
     --cmd-prefix "$SSH_ATTACKER" \
+    --rtt-cmd-prefix "$SSH_TRUSTED" \
     --step-duration 30 \
     --rtt-threshold-ms 50 \
     --loss-threshold-percent 5 \
@@ -309,7 +310,7 @@ run_main_experiment() {
     --attack-iface "$ATTACK_IFACE" \
     --attack-target "$VICTIM_DATA_IP" \
     --valid-target "$VICTIM_DATA_IP" \
-    --switch-ips "$TRUSTED_DATA_IP,$VICTIM_DATA_IP" \
+    --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
     --controller "$CONTROLLER_URL" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
     --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
@@ -343,7 +344,7 @@ run_main_experiment() {
       --attack-iface "$ATTACK_IFACE" \
       --attack-target "$VICTIM_DATA_IP" \
       --valid-target "$VICTIM_DATA_IP" \
-      --switch-ips "$TRUSTED_DATA_IP,$VICTIM_DATA_IP" \
+      --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
       --controller "$CONTROLLER_URL" \
       --controller-iface "$CONTROLLER_IFACE_VAL" \
       --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
@@ -415,7 +416,7 @@ run_baseline_no_attack_once() {
     --attack-method hping3 \
     --attack-target "$VICTIM_DATA_IP" \
     --valid-target "$VICTIM_DATA_IP" \
-    --switch-ips "$TRUSTED_DATA_IP,$VICTIM_DATA_IP" \
+    --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
     --controller "$CONTROLLER_URL" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
     --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
