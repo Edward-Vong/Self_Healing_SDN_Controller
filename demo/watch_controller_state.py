@@ -224,24 +224,21 @@ def run_flat(args, fh):
 
     while time.time() < deadline:
         stats, stats_err = safe_fetch(args.controller, "/stats")
-        attack, attack_err = safe_fetch(args.controller, "/attack/status")
         metrics, metrics_err = safe_fetch(args.controller, "/attack/metrics")
 
-        if stats_err or attack_err or metrics_err:
+        if stats_err or metrics_err:
             errs = []
             if stats_err:
                 errs.append("/stats: {}".format(stats_err))
-            if attack_err:
-                errs.append("/attack/status: {}".format(attack_err))
             if metrics_err:
                 errs.append("/attack/metrics: {}".format(metrics_err))
             log("WARN API fetch issue -> {}".format(" | ".join(errs)), fh)
             time.sleep(max(0.2, args.interval))
             continue
 
-        pi_rate = float(attack.get("packet_in_rate", stats.get("packet_in_rate", 0.0)))
+        pi_rate = float(metrics.get("packet_in_rate", stats.get("packet_in_rate", 0.0)))
         cpu = float(stats.get("controller_cpu_percent", 0.0))
-        mitigation_active = bool(attack.get("mitigation_active", False))
+        mitigation_active = bool(metrics.get("mitigation_active", False))
 
         mitigation_obj = metrics.get("mitigation", {}) if isinstance(metrics, dict) else {}
         escalated = flatten_escalated_ports(mitigation_obj.get("escalated_ports", {}))
@@ -294,6 +291,15 @@ def run_flat(args, fh):
                 saw_back_to_normal = True
         else:
             normal_start = None
+
+        phase = "NORMAL"
+        if mitigation_active and escalated:
+            phase = "LOCKDOWN"
+        elif mitigation_active:
+            phase = "METERING"
+        elif saw_mitigation_active and not saw_back_to_normal:
+            phase = "RECOVERY"
+        log("  phase={}".format(phase), fh)
 
         # Full end-to-end transition reached.
         if saw_threshold and saw_mitigation_active and saw_port_closed and (saw_back_to_meter or saw_back_to_normal):

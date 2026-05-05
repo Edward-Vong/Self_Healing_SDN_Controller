@@ -9,6 +9,7 @@ class RecoveryManager:
     
     RECOVERY_WINDOW = 60  # Total recovery time (seconds)
     STAGE_THRESHOLDS = [0.25, 0.50, 0.75, 1.0]  # Stage transition points
+    STAGE0_REMOVE_INTERVAL = 3.0  # Minimum seconds between meter removals in stage 0
     
     def __init__(self, attack_state, mitigation_manager, logger):
         self.attack_state = attack_state
@@ -17,6 +18,7 @@ class RecoveryManager:
         self.recovery_enabled = False
         self.recovery_start_time = None
         self.current_stage = -1
+        self._last_stage0_remove_time = 0.0
     
     def enter_recovery(self):
         """Start recovery phase"""
@@ -26,6 +28,7 @@ class RecoveryManager:
         self.recovery_enabled = True
         self.recovery_start_time = time.time()
         self.current_stage = 0
+        self._last_stage0_remove_time = 0.0
         self.logger.info("Entering recovery phase")
     
     def recovery_tick(self, datapaths):
@@ -67,18 +70,25 @@ class RecoveryManager:
     
     def _stage_0_remove_meters(self, datapaths):
         """Remove meters from least-attacked ports"""
+        now = time.time()
+        if now - self._last_stage0_remove_time < self.STAGE0_REMOVE_INTERVAL:
+            return
+
         for dpid, datapath in datapaths.items():
             ports_to_recover = list(self.attack_state.get_rate_limited_ports(dpid))
             if ports_to_recover:
                 # Remove meter from first port in the list (one port per tick)
                 port = ports_to_recover[0]
                 self.mitigation_manager.remove_meter_on_port(datapath, port)
+                self._last_stage0_remove_time = now
+                break
     
     def _stage_3_complete_recovery(self):
         """Final cleanup for full recovery"""
         self.recovery_enabled = False
         self.recovery_start_time = None
         self.current_stage = -1
+        self._last_stage0_remove_time = 0.0
         self.logger.info("Recovery complete")
     
     def is_recovering(self):
@@ -97,3 +107,4 @@ class RecoveryManager:
         self.recovery_enabled = False
         self.recovery_start_time = None
         self.current_stage = -1
+        self._last_stage0_remove_time = 0.0
