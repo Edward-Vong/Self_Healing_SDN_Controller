@@ -66,14 +66,14 @@ else
 fi
 
 echo "[INFO] Checking dataplane ARP"
-if run "$ATTACKER_HOST" "arping -I $ATTACK_IFACE_VAL -c 2 $ATTACK_TARGET >/tmp/arp_demo_attack.log 2>&1" && run "$ATTACKER_HOST" "grep -q 'Received [1-9]' /tmp/arp_demo_attack.log"; then
+if run "$ATTACKER_HOST" "sudo -n arping -I $ATTACK_IFACE_VAL -c 2 $ATTACK_TARGET >/tmp/arp_demo_attack.log 2>&1" && run "$ATTACKER_HOST" "grep -q 'Received [1-9]' /tmp/arp_demo_attack.log"; then
   ok "attacker -> victim ARP ($ATTACK_IFACE_VAL to $ATTACK_TARGET)"
 else
   bad "attacker -> victim ARP failed"
   run "$ATTACKER_HOST" "tail -5 /tmp/arp_demo_attack.log" || true
 fi
 
-if run "$TRUSTED_HOST" "arping -I $TRUSTED_VALID_IFACE_VAL -c 2 $VALID_TARGET >/tmp/arp_demo_valid.log 2>&1" && run "$TRUSTED_HOST" "grep -q 'Received [1-9]' /tmp/arp_demo_valid.log"; then
+if run "$TRUSTED_HOST" "sudo -n arping -I $TRUSTED_VALID_IFACE_VAL -c 2 $VALID_TARGET >/tmp/arp_demo_valid.log 2>&1" && run "$TRUSTED_HOST" "grep -q 'Received [1-9]' /tmp/arp_demo_valid.log"; then
   ok "trusted -> victim ARP ($TRUSTED_VALID_IFACE_VAL to $VALID_TARGET)"
 else
   bad "trusted -> victim ARP failed"
