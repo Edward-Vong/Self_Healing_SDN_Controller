@@ -31,6 +31,7 @@ from recovery_manager import RecoveryManager
 
 class SelfHealingSDNController(app_manager.RyuApp):
     """OpenFlow 1.3 learning switch with trust-aware mitigation controls."""
+    LIFECYCLE_VERSION = "phase-machine-v2"
     #print("debugging: in ryu app\n")
     # Use OpenFlow 1.3 for this controller
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -70,6 +71,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.start_time = time.time()
         self.packet_in_count = 0
         self.packet_in_events = deque()
+        self.learned_flow_install_count = 0
+        self.packet_out_count = 0
 
         # Controller CPU sampling state
         self._cpu_last_wall = time.time()
@@ -104,6 +107,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.trusted_sources = set()
         self.trust_threshold = TRUST_THRESHOLD
         self.mitigated_sources = defaultdict(int)  # Track mitigated packet count per source
+        self.mitigated_drop_count = 0
+        self.dropped_unknown_count = 0
+        self.dropped_overrate_count = 0
+        self.dropped_unknown_destination_count = 0
 
         # Initialize managers
         self.attack_state = AttackState(self.logger)
@@ -123,6 +130,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.start_time = time.time()
         self.packet_in_count = 0
         self.packet_in_events.clear()
+        self.learned_flow_install_count = 0
+        self.packet_out_count = 0
         self.attack_detected = False
         self.last_detection_time = None
         self.attack_cycle_start_time = None
@@ -143,6 +152,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.source_seen_counts.clear()
         self.trusted_sources.clear()
         self.mitigated_sources.clear()
+        self.mitigated_drop_count = 0
+        self.dropped_unknown_count = 0
+        self.dropped_overrate_count = 0
+        self.dropped_unknown_destination_count = 0
 
         # reset managers
         self.attack_state.clear_all()
@@ -166,8 +179,13 @@ class SelfHealingSDNController(app_manager.RyuApp):
         phase = self.current_phase()
 
         return {
+            "lifecycle_version": self.LIFECYCLE_VERSION,
             "phase": phase,
             "lockdown_active": phase == "LOCKDOWN",
+            "window_seconds": WINDOW_SECONDS,
+            "escalation_threshold_seconds": ESCALATION_THRESHOLD_SECONDS,
+            "recovery_quiet_seconds": self.recovery_quiet_seconds,
+            "recovery_window_seconds": self.recovery_manager.recovery_window,
             "mitigation_enabled": self.mitigation_enabled,
             "mitigation_active": self.mitigation_active(),
             "manual_mitigation": self.manual_mitigation,
@@ -180,6 +198,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "trust_threshold": self.trust_threshold,
             "trusted_sources": list(self.trusted_sources),
             "source_seen_counts": dict(self.source_seen_counts),
+            "mitigated_sources": dict(self.mitigated_sources),
+            "mitigated_drop_count": self.mitigated_drop_count,
+            "dropped_unknown_count": self.dropped_unknown_count,
+            "dropped_overrate_count": self.dropped_overrate_count,
+            "dropped_unknown_destination_count": self.dropped_unknown_destination_count,
         }
 
     def current_phase(self):
@@ -356,13 +379,18 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "known_hosts": len(self.hosts),
             "packet_in_total": self.packet_in_count,
             "packet_in_rate": round(packet_in_rate, 2) if uptime > 0 else 0,
+            "window_seconds": WINDOW_SECONDS,
             "controller_cpu_percent": controller_cpu_percent,
             "learned_mac_entries": sum(len(macs) for macs in self.mac_to_port.values()),
+            "learned_flow_install_count": self.learned_flow_install_count,
+            "packet_out_count": self.packet_out_count,
             "mitigation_enabled": self.mitigation_enabled,
             "mitigation_active": self.mitigation_active(),
             "attack_detected": self.attack_detected,
+            "mitigated_drop_count": self.mitigated_drop_count,
             "packet_in_threshold": self.packet_in_threshold,
             "phase": self.current_phase(),
+            "lifecycle_version": self.LIFECYCLE_VERSION,
             "manual_mitigation": self.manual_mitigation,
         }
         
@@ -481,6 +509,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
     def _drop_overrate_source(self, src, src_ip, dpid, in_port):
         """Drop packets from trusted sources exceeding rate threshold during mitigation."""
         self.mitigated_sources[src] += 1
+        self.mitigated_drop_count += 1
+        self.dropped_overrate_count += 1
 
         # Remove compromised trusted source — it must rebuild trust from scratch
         if src in self.trusted_sources:
@@ -573,6 +603,10 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.source_seen_counts.clear()
         self.source_packet_counts.clear()
         self.mitigated_sources.clear()
+        self.mitigated_drop_count = 0
+        self.dropped_unknown_count = 0
+        self.dropped_overrate_count = 0
+        self.dropped_unknown_destination_count = 0
         return {
             "result": "success",
             "message": "trust state cleared",
@@ -591,6 +625,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             data=data,
         )
         datapath.send_msg(out)
+        self.packet_out_count += 1
 
     def _install_learning_flow(self, datapath, msg, in_port, src, dst, actions):
         """Install a learned forwarding flow; return True if buffer consumed."""
@@ -600,9 +635,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         if msg.buffer_id != ofproto.OFP_NO_BUFFER:
             self.add_flow(datapath, LEARNING_PRIORITY, match, actions, buffer_id=msg.buffer_id)
+            self.learned_flow_install_count += 1
             return True
 
         self.add_flow(datapath, LEARNING_PRIORITY, match, actions)
+        self.learned_flow_install_count += 1
         return False
 
     def _handle_mitigation_packet(self, datapath, dpid, in_port, src, src_ip, dst, msg):
@@ -614,6 +651,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
             if in_port not in self.attack_state.get_rate_limited_ports(dpid):
                 self.mitigation_manager.install_meter_on_port(datapath, in_port)
             self.mitigated_sources[src] += 1
+            self.mitigated_drop_count += 1
+            self.dropped_unknown_count += 1
             return
 
         if self.should_drop_packet(src, source_trusted):
@@ -621,7 +660,9 @@ class SelfHealingSDNController(app_manager.RyuApp):
             return
 
         # Trusted source within rate: forward only if destination is known.
-        self._forward_if_known(datapath, dpid, dst, msg, in_port)
+        if not self._forward_if_known(datapath, dpid, dst, msg, in_port):
+            self.mitigated_drop_count += 1
+            self.dropped_unknown_destination_count += 1
 
     def _handle_normal_packet(self, datapath, dpid, in_port, src, src_ip, dst, msg):
         """Process a packet under normal learning-switch behavior."""

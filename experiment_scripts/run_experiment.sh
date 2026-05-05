@@ -185,10 +185,7 @@ append_event() {
   local now t
   now=$(date +%s.%N)
   t=$(awk "BEGIN {printf \"%.3f\", $now - $START_EPOCH}")
-  if [ ! -f "$OUT/events.csv" ]; then
-    echo "event,t,timestamp,value" > "$OUT/events.csv"
-  fi
-  echo "$event,$t,$now,$value" >> "$OUT/events.csv"
+  echo "$event,$t,$now,$value" >> "$DRIVER_EVENTS"
 }
 
 # reset and configure controller if reachable
@@ -215,6 +212,8 @@ if [ -n "$THRESHOLD" ]; then
 fi
 
 START_EPOCH=$(date +%s.%N)
+DRIVER_EVENTS="$OUT/driver_events.csv"
+echo "event,t,timestamp,value" > "$DRIVER_EVENTS"
 run_log "[INFO] Metrics collection phase starting"
 
 # Start iperf server on victim when requested. For Mininet/local testing, start it manually if needed.
@@ -313,6 +312,13 @@ fi
 
 wait "$(cat "$OUT/collector.pid")" || true
 run_log "[INFO] Collector wait completed"
+
+if [ -f "$DRIVER_EVENTS" ]; then
+  if [ ! -f "$OUT/events.csv" ]; then
+    echo "event,t,timestamp,value" > "$OUT/events.csv"
+  fi
+  tail -n +2 "$DRIVER_EVENTS" >> "$OUT/events.csv"
+fi
 
 bash "$SCRIPT_DIR/cleanup.sh" --out "$OUT" >> "$OUT/experiment.log" 2>&1 || true
 

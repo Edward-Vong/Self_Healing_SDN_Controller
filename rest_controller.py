@@ -114,6 +114,8 @@ class RestController(ControllerBase):
             "mitigation_active": self.app.mitigation_active(),
             "attack_detected": self.app.attack_detected,
             "phase": self.app.current_phase(),
+            "lifecycle_version": self.app.LIFECYCLE_VERSION,
+            "window_seconds": WINDOW_SECONDS,
             "manual_mitigation": self.app.manual_mitigation,
             "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
             "threshold_rate": self.app.packet_in_threshold,
@@ -138,6 +140,8 @@ class RestController(ControllerBase):
             "mitigation_active": self.app.mitigation_active(),
             "attack_detected": self.app.attack_detected,
             "phase": self.app.current_phase(),
+            "lifecycle_version": self.app.LIFECYCLE_VERSION,
+            "window_seconds": WINDOW_SECONDS,
             "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
             "packet_in_threshold": self.app.packet_in_threshold,
             "mitigation": self.app.get_mitigation_summary()

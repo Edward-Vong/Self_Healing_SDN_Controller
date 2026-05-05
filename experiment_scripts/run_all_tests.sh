@@ -41,6 +41,8 @@ RUN_BASELINE_CONTROL=on
 RUN_SATURATION=on
 RUN_CORE=on
 RUN_SWEEPS=on
+RUN_RATE_SWEEP=on
+RUN_SIZE_SWEEP=on
 CLEAR_OVS_MODE="off"
 
 DURATION=75
@@ -49,6 +51,8 @@ ATTACK_LENGTH=60
 ATTACK_IFACE="${ATTACK_IFACE:-eth1}"
 SCAPY_RATE=1200
 HPING_RATE=10000
+SIZE_SWEEP_RATE=1200
+SIZE_SWEEP_SIZES="64,256,512"
 SATURATION_ATTACK_METHOD="scapy"
 SATURATION_STEP_DURATION=15
 SATURATION_RATES="1000,5000,10000,20000,50000"
@@ -126,6 +130,8 @@ Options:
   --attack-length SEC          Attack duration inside each run (default: $ATTACK_LENGTH)
   --hping-rate PPS             Hping label rate (default: $HPING_RATE)
   --scapy-rate PPS             Scapy PPS (default: $SCAPY_RATE)
+  --size-sweep-rate PPS        Scapy PPS for packet-size sweep (default: $SIZE_SWEEP_RATE)
+  --size-sweep-sizes CSV       Packet sizes for Scapy size sweep, bytes (default: $SIZE_SWEEP_SIZES)
   --saturation-attack-method M Saturation method: hping3|scapy|udp (default: $SATURATION_ATTACK_METHOD)
   --saturation-step-duration S Saturation step duration seconds (default: $SATURATION_STEP_DURATION)
   --saturation-rates CSV       Saturation rates CSV, pps (default: $SATURATION_RATES)
@@ -137,6 +143,8 @@ Options:
   --skip-saturation            Skip saturation finder stage
   --skip-core                  Skip core 3 comparison runs
   --skip-sweeps                Skip rate and size sweeps
+  --skip-rate-sweep            Skip only the Scapy rate sweep
+  --skip-size-sweep            Skip only the Scapy packet-size sweep
   --clear-ovs MODE             on|off|auto for run_experiment.sh (default: $CLEAR_OVS_MODE)
   --trim-start SEC             Seconds of warm-up data to exclude from plots (default: $TRIM_START)
   --replot                     Regenerate plots from existing results without re-running experiments
@@ -165,6 +173,8 @@ while [ $# -gt 0 ]; do
     --attack-length) ATTACK_LENGTH="$2"; shift 2 ;;
     --hping-rate) HPING_RATE="$2"; shift 2 ;;
     --scapy-rate) SCAPY_RATE="$2"; shift 2 ;;
+    --size-sweep-rate) SIZE_SWEEP_RATE="$2"; shift 2 ;;
+    --size-sweep-sizes) SIZE_SWEEP_SIZES="$2"; shift 2 ;;
     --saturation-attack-method) SATURATION_ATTACK_METHOD="$2"; shift 2 ;;
     --saturation-step-duration) SATURATION_STEP_DURATION="$2"; shift 2 ;;
     --saturation-rates) SATURATION_RATES="$2"; shift 2 ;;
@@ -175,7 +185,9 @@ while [ $# -gt 0 ]; do
     --skip-baseline-control) RUN_BASELINE_CONTROL=off; shift ;;
     --skip-saturation) RUN_SATURATION=off; shift ;;
     --skip-core) RUN_CORE=off; shift ;;
-    --skip-sweeps) RUN_SWEEPS=off; shift ;;
+    --skip-sweeps) RUN_SWEEPS=off; RUN_RATE_SWEEP=off; RUN_SIZE_SWEEP=off; shift ;;
+    --skip-rate-sweep) RUN_RATE_SWEEP=off; shift ;;
+    --skip-size-sweep) RUN_SIZE_SWEEP=off; shift ;;
     --clear-ovs) CLEAR_OVS_MODE="$2"; shift 2 ;;
     --trim-start) TRIM_START="$2"; shift 2 ;;
     --replot) REPLOT_ONLY=1; shift ;;
@@ -318,8 +330,10 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "  VICTIM=$VICTIM_HOST     VICTIM_DATA_IP=$VICTIM_DATA_IP  VALID_TARGET_IP=$VALID_TARGET_IP"
   echo "  ATTACKER_PYTHON_BIN=$ATTACKER_PYTHON_BIN"
   echo "  ATTACK_IFACE=$ATTACK_IFACE  SIZE=256  ATTACK_LENGTH=${ATTACK_LENGTH}s  DURATION=${DURATION}s"
-  echo "  SCAPY_RATE=$SCAPY_RATE  HPING_RATE=$HPING_RATE  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
-  echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE  RUN_SWEEPS=$RUN_SWEEPS"
+  echo "  SCAPY_RATE=$SCAPY_RATE  HPING_RATE=$HPING_RATE  SIZE_SWEEP_RATE=$SIZE_SWEEP_RATE  SIZE_SWEEP_SIZES=$SIZE_SWEEP_SIZES"
+  echo "  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
+  echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE"
+  echo "  RUN_SWEEPS=$RUN_SWEEPS  RUN_RATE_SWEEP=$RUN_RATE_SWEEP  RUN_SIZE_SWEEP=$RUN_SIZE_SWEEP"
 
   failed=0
 
@@ -612,10 +626,20 @@ if [ "$RUN_CORE" = "on" ]; then
   run_main_experiment "scapy_attack_mit_on"  "$SCAPY_RATE" on  scapy  256
 fi
 
-if [ "$RUN_SWEEPS" = "on" ]; then
+if [ "$RUN_SWEEPS" = "on" ] && [ "$RUN_RATE_SWEEP" = "on" ]; then
   log_stage "[INFO] Running scapy rate sweep"
   for r in 600 900 1200 1500 3000 5000 10000; do
     run_main_experiment "rate_${r}_scapy_mit_on" "$r" on scapy 256
+  done
+fi
+
+if [ "$RUN_SWEEPS" = "on" ] && [ "$RUN_SIZE_SWEEP" = "on" ]; then
+  log_stage "[INFO] Running scapy packet size sweep (rate=${SIZE_SWEEP_RATE}pps sizes=${SIZE_SWEEP_SIZES})"
+  IFS=',' read -r -a SIZE_SWEEP_ARRAY <<< "$SIZE_SWEEP_SIZES"
+  for sz in "${SIZE_SWEEP_ARRAY[@]}"; do
+    sz="$(echo "$sz" | tr -d '[:space:]')"
+    [ -n "$sz" ] || continue
+    run_main_experiment "size_${sz}_scapy_mit_on" "$SIZE_SWEEP_RATE" on scapy "$sz"
   done
 fi
 

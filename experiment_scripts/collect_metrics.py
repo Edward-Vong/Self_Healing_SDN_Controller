@@ -43,6 +43,8 @@ def flat_mitigation(m):
     for dpid, ports in (mit.get('escalated_ports') or {}).items():
         escalated.extend(ports)
     return {
+        'phase': m.get('phase', mit.get('phase', '')),
+        'lockdown_active': bool(mit.get('lockdown_active', False)),
         'mitigated_drop_count': mit.get('mitigated_drop_count', 0),
         'dropped_unknown_count': mit.get('dropped_unknown_count', 0),
         'dropped_overrate_count': mit.get('dropped_overrate_count', 0),
@@ -217,8 +219,8 @@ def main():
     events_path=os.path.join(args.out,'events.csv')
     mf=open(metrics_path,'w',newline=''); sf=open(status_path,'w',newline=''); gf=open(mitigation_path,'w',newline=''); lf=open(link_path,'w',newline=''); ef=open(events_path,'w',newline='')
     mw=csv.DictWriter(mf, fieldnames=['t','timestamp','packet_in_total','packet_in_rate','packet_in_threshold','controller_cpu_percent','connected_switches','known_hosts','learned_mac_entries','learned_flow_install_count','packet_out_count','mitigation_enabled','mitigation_active','attack_detected','manual_mitigation','mitigated_drop_count'])
-    sw=csv.DictWriter(sf, fieldnames=['t','timestamp','attack_detected','mitigation_active','manual_mitigation','packet_in_rate','threshold_rate','attack_detection_time','mitigation_start_time'])
-    gw=csv.DictWriter(gf, fieldnames=['t','timestamp','mitigated_drop_count','dropped_unknown_count','dropped_overrate_count','dropped_unknown_destination_count','trusted_source_count','source_seen_count_total','mitigated_source_count','rate_limited_ports_count','escalated_ports_count'])
+    sw=csv.DictWriter(sf, fieldnames=['t','timestamp','phase','lockdown_active','attack_detected','mitigation_active','manual_mitigation','packet_in_rate','threshold_rate','attack_detection_time','mitigation_start_time'])
+    gw=csv.DictWriter(gf, fieldnames=['t','timestamp','phase','lockdown_active','mitigated_drop_count','dropped_unknown_count','dropped_overrate_count','dropped_unknown_destination_count','trusted_source_count','source_seen_count_total','mitigated_source_count','rate_limited_ports_count','escalated_ports_count'])
     lw=csv.DictWriter(lf, fieldnames=['t','timestamp','iface','rx_pps','tx_pps','total_pps','rx_packets','tx_packets','rx_mbps','tx_mbps','total_mbps','rx_bytes','tx_bytes','rx_dropped','tx_dropped','rx_errors','tx_errors'])
     ew=csv.DictWriter(ef, fieldnames=['event','t','timestamp','value'])
     for w in (mw,sw,gw,lw,ew): w.writeheader()

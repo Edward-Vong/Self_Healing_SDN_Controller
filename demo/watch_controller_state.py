@@ -8,6 +8,10 @@ from urllib.error import URLError, HTTPError
 from urllib.request import urlopen
 
 
+EXPECTED_LIFECYCLE_VERSION = "phase-machine-v2"
+EXPECTED_WINDOW_SECONDS = 3
+
+
 def now_ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -222,6 +226,37 @@ def run_flat(args, fh):
     log("  Target PPS   Avg PI Rate   Avg CPU %", fh)
     log("--------------------------------------", fh)
     log("", fh)
+
+    initial_metrics, initial_err = safe_fetch(args.controller, "/attack/metrics")
+    if initial_err:
+        log("ERROR cannot verify controller runtime: {}".format(initial_err), fh)
+        sys.exit(2)
+
+    lifecycle_version = str(initial_metrics.get("lifecycle_version", "missing"))
+    window_seconds = initial_metrics.get("window_seconds", "missing")
+    mitigation_obj = initial_metrics.get("mitigation", {}) if isinstance(initial_metrics, dict) else {}
+    if lifecycle_version == "missing" and isinstance(mitigation_obj, dict):
+        lifecycle_version = str(mitigation_obj.get("lifecycle_version", "missing"))
+    if window_seconds == "missing" and isinstance(mitigation_obj, dict):
+        window_seconds = mitigation_obj.get("window_seconds", "missing")
+
+    log(
+        "Controller runtime: lifecycle_version={} window_seconds={}".format(
+            lifecycle_version,
+            window_seconds,
+        ),
+        fh,
+    )
+
+    if lifecycle_version != EXPECTED_LIFECYCLE_VERSION or window_seconds != EXPECTED_WINDOW_SECONDS:
+        log(
+            "ERROR wrong controller runtime: expected lifecycle_version={} window_seconds={}. Restart Ryu from this repo/file.".format(
+                EXPECTED_LIFECYCLE_VERSION,
+                EXPECTED_WINDOW_SECONDS,
+            ),
+            fh,
+        )
+        sys.exit(2)
 
     while time.time() < deadline:
         stats, stats_err = safe_fetch(args.controller, "/stats")

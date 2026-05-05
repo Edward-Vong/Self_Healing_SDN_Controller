@@ -6,8 +6,8 @@ try:
     import matplotlib.pyplot as plt
     _HAS_MPL = True
 except ImportError:
-    print('[WARN] matplotlib not available; skipping plots', flush=True)
-    sys.exit(0)
+    plt = None
+    _HAS_MPL = False
 
 def read_csv(path):
     if not os.path.exists(path): return []
@@ -27,6 +27,37 @@ def event_times(events, names):
         if name in names and name not in times:
             times[name] = num(e, "t")
     return times
+
+KNOWN_EVENTS = set([
+    'valid_traffic_started',
+    'attack_started',
+    'attack_ended',
+    'threshold_crossed',
+    'threshold_cleared',
+    'attack_detected',
+    'attack_cleared',
+    'mitigation_active',
+    'mitigation_ended',
+    'metering_started',
+    'metering_cleared',
+    'escalation_started',
+    'escalation_cleared',
+    'node_saturated',
+    'node_recovered',
+    'collector_error',
+])
+
+def clean_events(events):
+    cleaned = []
+    for e in events:
+        if e.get('event') not in KNOWN_EVENTS:
+            continue
+        try:
+            float(e.get('t', ''))
+        except Exception:
+            continue
+        cleaned.append(e)
+    return cleaned
 
 
 def add_transition_markers(events):
@@ -49,6 +80,19 @@ def add_transition_markers(events):
         label = style['label'] if name not in drawn else None
         plt.axvline(num(e, 't'), linestyle=':', color=style['color'], label=label)
         drawn.add(name)
+
+def place_legend(outside=False):
+    """Place legends consistently without hiding dense time-series data."""
+    ax = plt.gca()
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    if outside or len(labels) > 5:
+        ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0)
+        plt.tight_layout(rect=[0, 0, 0.80, 1])
+    else:
+        ax.legend(loc='best')
+        plt.tight_layout()
 
 def _csv(d, name):
     """Resolve a CSV/JSON data file: prefer csv/ subdir (post-run), fall back to root."""
@@ -77,7 +121,11 @@ def save_line(rows, x, ys, labels, title, ylabel, out):
         all_vals.extend(yvals)
     plt.xlabel('time (s)' if x=='t' else x); plt.ylabel(ylabel); plt.title(title)
     _smart_ylim(all_vals)
-    plt.grid(True); plt.legend(); plt.tight_layout(); plt.savefig(out); plt.close(); return True
+    plt.grid(True)
+    place_legend()
+    plt.savefig(out)
+    plt.close()
+    return True
 
 
 def _percentile99(values):
@@ -96,6 +144,76 @@ def _smart_ylim(values, margin=0.15):
         plt.ylim(bottom=0, top=cap * (1 + margin))
 
 
+def rows_between(rows, start, end=None):
+    out = []
+    for row in rows:
+        t = num(row, 't')
+        if t < start:
+            continue
+        if end is not None and t > end:
+            continue
+        out.append(row)
+    return out
+
+
+def average(values):
+    vals = [v for v in values if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def pct_reduction(before, after):
+    if before is None or after is None or before <= 0:
+        return None
+    return ((before - after) / before) * 100.0
+
+
+def write_lockdown_summary(run_dir, events, status_plot, link_plot, mit_plot):
+    ev_times = event_times(events, ['metering_started', 'escalation_started', 'attack_ended'])
+    metering_start = ev_times.get('metering_started') or ev_times.get('mitigation_active')
+    escalation_start = ev_times.get('escalation_started')
+    attack_end = ev_times.get('attack_ended')
+    if metering_start is None or escalation_start is None:
+        return None
+
+    # Skip the first few seconds after escalation so 3s Packet-In windows and
+    # interface deltas have time to reflect the drop rule.
+    post_start = escalation_start + 3.0
+    pre_status = rows_between(status_plot, metering_start, escalation_start)
+    post_status = rows_between(status_plot, post_start, attack_end)
+    pre_link = rows_between(link_plot, metering_start, escalation_start)
+    post_link = rows_between(link_plot, post_start, attack_end)
+    pre_mit = rows_between(mit_plot, metering_start, escalation_start)
+    post_mit = rows_between(mit_plot, post_start, attack_end)
+
+    pre_packetin = average([num(r, 'packet_in_rate') for r in pre_status])
+    post_packetin = average([num(r, 'packet_in_rate') for r in post_status])
+    pre_pps = average([num(r, 'total_pps') for r in pre_link])
+    post_pps = average([num(r, 'total_pps') for r in post_link])
+    post_escalated = average([num(r, 'escalated_ports_count') for r in post_mit])
+
+    summary = {
+        'metering_start': metering_start,
+        'escalation_start': escalation_start,
+        'post_lockdown_start': post_start,
+        'attack_end': attack_end if attack_end is not None else '',
+        'metering_avg_packet_in_rate': pre_packetin,
+        'lockdown_avg_packet_in_rate': post_packetin,
+        'packet_in_rate_reduction_pct': pct_reduction(pre_packetin, post_packetin),
+        'metering_avg_total_pps': pre_pps,
+        'lockdown_avg_total_pps': post_pps,
+        'total_pps_reduction_pct': pct_reduction(pre_pps, post_pps),
+        'lockdown_avg_escalated_ports': post_escalated,
+    }
+
+    path = _csv_write(run_dir, 'lockdown_impact_summary.csv')
+    with open(path, 'w', newline='') as f:
+        fields = list(summary.keys())
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        w.writerow({k: '' if v is None else round(v, 4) if isinstance(v, float) else v for k, v in summary.items()})
+    return summary
+
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument('input_dir')
@@ -112,7 +230,7 @@ def main():
     status=read_csv(_csv(d,'attack_status.csv'))
     mit=read_csv(_csv(d,'mitigation_metrics.csv'))
     link=read_csv(_csv(d,'controller_link_util.csv'))
-    events=read_csv(_csv(d,'events.csv'))
+    events=clean_events(read_csv(_csv(d,'events.csv')))
 
     def trim_rows(rows):
         """Drop rows before trim_start so the initial spike is excluded from plots."""
@@ -124,6 +242,11 @@ def main():
     link_plot    = trim_rows(link)
 
     made=[]
+    if not _HAS_MPL:
+        if status_plot and mit_plot:
+            write_lockdown_summary(d, events, status_plot, link_plot, mit_plot)
+        print('[WARN] matplotlib not available; wrote derived CSVs only', flush=True)
+        return
     
     if status_plot:
         plt.figure(figsize=(14, 6))
@@ -147,7 +270,8 @@ def main():
         _smart_ylim(ys)
         plt.xlabel('time (s)'); plt.ylabel('Packet-In events/sec')
         plt.title('Attack detection: Packet-In rate over time')
-        plt.grid(True); plt.legend(); plt.tight_layout()
+        plt.grid(True)
+        place_legend(outside=True)
         path=os.path.join(out,'packetin_rate_detection.png'); plt.savefig(path); plt.close(); made.append(path)
     
     if metrics_plot:
@@ -174,8 +298,7 @@ def main():
         plt.ylabel('CPU %')
         plt.title('Controller CPU over time')
         plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
+        place_legend(outside=True)
 
         path = os.path.join(out, 'cpu_over_time.png')
         plt.savefig(path)
@@ -210,8 +333,7 @@ def main():
         plt.ylabel('drops/sec')
         plt.title('Mitigation drops rate over time')
         plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
+        place_legend()
         path = os.path.join(out, 'mitigation_drops_over_time.png')
         plt.savefig(path)
         plt.close()
@@ -234,7 +356,7 @@ def main():
             'mitigated sources'
         ]
 
-        plt.figure()
+        plt.figure(figsize=(14, 6))
         bars = plt.bar(labs, vals)
 
         # Print the count above each bar
@@ -259,7 +381,7 @@ def main():
     
     lutil_png=os.path.join(out,'controller_link_util_over_time.png')
     if link_plot:
-        plt.figure()
+        plt.figure(figsize=(14, 6))
         xs=[num(r,'t') for r in link_plot]
         has_pps = any((r.get('total_pps') not in ('', None) for r in link_plot))
         all_vals=[]
@@ -291,11 +413,80 @@ def main():
         plt.ylabel(ylabel)
         plt.title(title)
         plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
+        place_legend(outside=True)
         plt.savefig(lutil_png)
         plt.close()
         made.append(lutil_png)
+
+    if status_plot and mit_plot:
+        summary = write_lockdown_summary(d, events, status_plot, link_plot, mit_plot)
+        ev_times = event_times(events, ['metering_started', 'mitigation_active', 'escalation_started', 'attack_ended'])
+        metering_start = ev_times.get('metering_started') or ev_times.get('mitigation_active')
+        escalation_start = ev_times.get('escalation_started')
+        if metering_start is not None and escalation_start is not None:
+            fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+
+            status_x = [num(r, 't') for r in status_plot]
+            packet_in = [num(r, 'packet_in_rate') for r in status_plot]
+            axes[0].plot(status_x, packet_in, color='tab:red', label='Packet-In rate')
+            axes[0].set_ylabel('Packet-In/s')
+            axes[0].set_title('Lockdown impact: controller pressure before and after escalation')
+            axes[0].grid(True, alpha=0.35)
+
+            if link_plot:
+                link_x = [num(r, 't') for r in link_plot]
+                link_total = [num(r, 'total_pps') for r in link_plot]
+                axes[1].plot(link_x, link_total, color='tab:blue', label='controller-link total pps')
+            else:
+                axes[1].text(0.5, 0.5, 'controller_link_util.csv unavailable', ha='center', va='center', transform=axes[1].transAxes)
+            axes[1].set_ylabel('link pps')
+            axes[1].grid(True, alpha=0.35)
+
+            mit_x = [num(r, 't') for r in mit_plot]
+            rate_limited = [num(r, 'rate_limited_ports_count') for r in mit_plot]
+            escalated = [num(r, 'escalated_ports_count') for r in mit_plot]
+            axes[2].step(mit_x, rate_limited, where='post', label='rate-limited ports', color='tab:purple')
+            axes[2].step(mit_x, escalated, where='post', label='lockdown/drop ports', color='tab:brown')
+            axes[2].set_ylabel('ports')
+            axes[2].set_xlabel('time (s)')
+            axes[2].grid(True, alpha=0.35)
+
+            attack_end = ev_times.get('attack_ended')
+            window_end = attack_end if attack_end is not None else max(status_x or mit_x)
+            for ax in axes:
+                ax.axvspan(metering_start, escalation_start, color='tab:purple', alpha=0.08, label='metering window')
+                ax.axvspan(escalation_start, window_end, color='tab:brown', alpha=0.10, label='lockdown window')
+                ax.axvline(escalation_start, color='tab:brown', linestyle=':', label='lockdown starts')
+
+            if summary:
+                pir_drop = summary.get('packet_in_rate_reduction_pct')
+                pps_drop = summary.get('total_pps_reduction_pct')
+                notes = []
+                if pir_drop is not None:
+                    notes.append('Packet-In avg reduction: {:.1f}%'.format(pir_drop))
+                if pps_drop is not None:
+                    notes.append('Link PPS avg reduction: {:.1f}%'.format(pps_drop))
+                if notes:
+                    axes[0].text(
+                        0.01, 0.95, '\n'.join(notes),
+                        transform=axes[0].transAxes,
+                        va='top',
+                        bbox={'boxstyle': 'round,pad=0.35', 'facecolor': 'white', 'alpha': 0.85, 'edgecolor': '#cccccc'}
+                    )
+
+            for ax in axes:
+                handles, labels = ax.get_legend_handles_labels()
+                if handles:
+                    uniq = {}
+                    for h, l in zip(handles, labels):
+                        uniq.setdefault(l, h)
+                    ax.legend(uniq.values(), uniq.keys(), loc='upper right')
+
+            plt.tight_layout()
+            path = os.path.join(out, 'lockdown_impact_summary.png')
+            plt.savefig(path)
+            plt.close()
+            made.append(path)
     # parse ping RTT logs — one combined plot covering both existing and new legitimate traffic flows
     import json, re
 
@@ -310,7 +501,7 @@ def main():
             attack_delay = float(cfg.get('attack_delay', 0) or 0)
             valid_new_delay = float(cfg.get('valid_new_delay', 10) or 10)
 
-    plt.figure()
+    plt.figure(figsize=(14, 6))
     has_ping = False
 
     for name, offset in [('ping_existing', 0), ('ping_new', valid_new_delay)]:
@@ -367,8 +558,7 @@ def main():
         plt.ylabel('RTT ms')
         plt.title('Legitimate Traffic RTT During Attack and Recovery')
         plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
+        place_legend()
 
         fig = plt.gcf()
         fig.set_size_inches(14, 6)
@@ -446,15 +636,13 @@ def main():
         plt.ylabel('Mbits/sec')
         plt.title('Trusted Throughput During Attack and Recovery')
         plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
+        place_legend()
         path = os.path.join(out, 'trusted_throughput_combined.png')
         plt.savefig(path)
         plt.close()
         made.append(path)
     else:
         plt.close()
-        made.append(path)
     
     if mit_plot:
         plt.figure(figsize=(14, 6))
@@ -473,8 +661,7 @@ def main():
         plt.ylabel('number of ports')
         plt.title('Port-level mitigation escalation over time')
         plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
+        place_legend()
         path=os.path.join(out,'mitigation_port_escalation.png')
         plt.savefig(path)
         plt.close()

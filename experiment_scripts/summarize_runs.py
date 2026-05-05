@@ -13,6 +13,7 @@ import re
 import statistics
 import sys
 from pathlib import Path
+from collections import Counter
 
 try:
     import matplotlib
@@ -46,6 +47,14 @@ def avg(values):
 def maxv(values):
     vals = [v for v in values if v is not None]
     return max(vals) if vals else 0.0
+
+
+def most_common_value(rows, key, filter_fn=lambda r: True):
+    vals = [fnum(r.get(key)) for r in rows if filter_fn(r)]
+    vals = [v for v in vals if v > 0]
+    if not vals:
+        return None
+    return Counter(vals).most_common(1)[0][0]
 
 
 def _sub(run_dir, subdir, name):
@@ -112,6 +121,7 @@ def summarize_run(run_dir):
     metrics = read_csv(_sub(run_dir, "csv", "controller_metrics.csv"))
     status = read_csv(_sub(run_dir, "csv", "attack_status.csv"))
     mit = read_csv(_sub(run_dir, "csv", "mitigation_metrics.csv"))
+    lockdown_rows = read_csv(_sub(run_dir, "csv", "lockdown_impact_summary.csv"))
 
     attack_metrics = [r for r in metrics if attack_delay <= fnum(r.get("t")) <= attack_end]
     attack_status = [r for r in status if attack_delay <= fnum(r.get("t")) <= attack_end]
@@ -123,6 +133,7 @@ def summarize_run(run_dir):
     iperf_new = parse_iperf_log(run_dir, "iperf_new")
 
     last_mit = mit[-1] if mit else {}
+    lockdown = lockdown_rows[0] if lockdown_rows else {}
 
     return {
         "run_dir": str(run_dir),
@@ -145,6 +156,10 @@ def summarize_run(run_dir):
         "mitigated_drop_count": fnum(last_mit.get("mitigated_drop_count")),
         "dropped_unknown_count": fnum(last_mit.get("dropped_unknown_count")),
         "dropped_overrate_count": fnum(last_mit.get("dropped_overrate_count")),
+        "max_escalated_ports": maxv([fnum(r.get("escalated_ports_count")) for r in mit]),
+        "lockdown_packetin_reduction_pct": fnum(lockdown.get("packet_in_rate_reduction_pct")),
+        "lockdown_total_pps_reduction_pct": fnum(lockdown.get("total_pps_reduction_pct")),
+        "lockdown_avg_escalated_ports": fnum(lockdown.get("lockdown_avg_escalated_ports")),
     }
 
 
@@ -164,7 +179,7 @@ def plot_xy(rows, xkey, ykey, title, ylabel, out_path, filter_fn):
         return False
     data = [r for r in rows if filter_fn(r)]
     data = sorted(data, key=lambda r: fnum(r.get(xkey)))
-    if len(data) < 2:
+    if len({fnum(r.get(xkey)) for r in data}) < 2:
         return False
     plt.figure(figsize=(10, 6))
     plt.plot([r[xkey] for r in data], [r[ykey] for r in data], marker="o")
@@ -172,6 +187,38 @@ def plot_xy(rows, xkey, ykey, title, ylabel, out_path, filter_fn):
     plt.ylabel(ylabel)
     plt.title(title)
     plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+    return True
+
+
+def plot_mitigation_comparison(rows, out_path):
+    if not _HAS_MPL:
+        return False
+    pairs = {}
+    for row in rows:
+        name = row.get("name", "")
+        if not name.endswith("_attack_mit_on") and not name.endswith("_attack_mit_off"):
+            continue
+        method = row.get("attack_method", "") or name.split("_", 1)[0]
+        pairs.setdefault(method, {})[row.get("mitigation")] = row
+    methods = [m for m in sorted(pairs) if "on" in pairs[m] and "off" in pairs[m]]
+    if not methods:
+        return False
+
+    x = list(range(len(methods)))
+    width = 0.35
+    off_vals = [pairs[m]["off"]["max_packetin_attack"] for m in methods]
+    on_vals = [pairs[m]["on"]["max_packetin_attack"] for m in methods]
+    plt.figure(figsize=(10, 6))
+    plt.bar([i - width / 2 for i in x], off_vals, width=width, label="mitigation off")
+    plt.bar([i + width / 2 for i in x], on_vals, width=width, label="mitigation on")
+    plt.xticks(x, methods)
+    plt.ylabel("max Packet-In rate during attack")
+    plt.title("Mitigation effect on controller Packet-In pressure")
+    plt.grid(True, axis="y", alpha=0.3)
+    plt.legend()
     plt.tight_layout()
     plt.savefig(out_path)
     plt.close()
@@ -199,6 +246,26 @@ def main():
 
     summary_csv = write_summary(rows, out_dir)
     made = [summary_csv]
+    has_named_rate_sweep = any(str(r.get("name", "")).startswith("rate_") for r in rows)
+    has_named_size_sweep = any(str(r.get("name", "")).startswith("size_") for r in rows)
+    rate_sweep_size = most_common_value(
+        rows,
+        "size",
+        lambda r: (
+            r.get("mitigation") == "on"
+            and fnum(r.get("rate")) > 0
+            and (not has_named_rate_sweep or str(r.get("name", "")).startswith("rate_"))
+        ),
+    )
+    size_sweep_rate = most_common_value(
+        rows,
+        "rate",
+        lambda r: (
+            r.get("mitigation") == "on"
+            and fnum(r.get("size")) > 0
+            and (not has_named_size_sweep or str(r.get("name", "")).startswith("size_"))
+        ),
+    )
 
     # Rate sweep: compare only runs where size, mitigation, and method are constant.
     for ykey, ylabel in [
@@ -217,10 +284,20 @@ def main():
             "Rate sweep: {}".format(ykey),
             ylabel,
             out,
-            lambda r: r.get("mitigation") == "on" and fnum(r.get("size")) == 64,
+            lambda r: (
+                r.get("mitigation") == "on"
+                and fnum(r.get("rate")) > 0
+                and rate_sweep_size is not None
+                and fnum(r.get("size")) == rate_sweep_size
+                and (not has_named_rate_sweep or str(r.get("name", "")).startswith("rate_"))
+            ),
         )
         if ok:
             made.append(out)
+
+    out = out_dir / "mitigation_on_off_packetin_comparison.png"
+    if plot_mitigation_comparison(rows, out):
+        made.append(out)
 
     # Size sweep: compare only runs where rate and mitigation are constant.
     for ykey, ylabel in [
@@ -238,7 +315,13 @@ def main():
             "Packet size sweep: {}".format(ykey),
             ylabel,
             out,
-            lambda r: r.get("mitigation") == "on" and fnum(r.get("rate")) == 10000,
+            lambda r: (
+                r.get("mitigation") == "on"
+                and fnum(r.get("size")) > 0
+                and size_sweep_rate is not None
+                and fnum(r.get("rate")) == size_sweep_rate
+                and (not has_named_size_sweep or str(r.get("name", "")).startswith("size_"))
+            ),
         )
         if ok:
             made.append(out)
