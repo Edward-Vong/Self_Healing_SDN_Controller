@@ -79,6 +79,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.last_detection_time = None
         self.attack_clear_time = None  # When rate first dropped below threshold
+        self.mitigation_latch_until = 0.0  # Keep mitigation engaged briefly after detection/clear
+        self._last_status_update = 0.0
 
         # Mitigation state
         self.mitigation_enabled = MITIGATION_ENABLED
@@ -109,6 +111,8 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.attack_detected = False
         self.last_detection_time = None
         self.attack_clear_time = None
+        self.mitigation_latch_until = 0.0
+        self._last_status_update = 0.0
         self.manual_mitigation = False
 
         # reset source rate tracking
@@ -168,9 +172,18 @@ class SelfHealingSDNController(app_manager.RyuApp):
     
     def _update_attack_status(self):
         """Refresh attack state, recovery progression, and escalation checks."""
+        now = time.time()
+
+        # Multiple REST endpoints can call this per polling cycle. Throttle updates
+        # so status transitions are driven by traffic windows, not API call bursts.
+        if now - self._last_status_update < 0.5:
+            return
+        self._last_status_update = now
         
         if self.manual_mitigation:
             self.attack_detected = True
+            self.attack_clear_time = None
+            self.mitigation_latch_until = max(self.mitigation_latch_until, now + WINDOW_SECONDS)
             return
 
         current_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
@@ -179,17 +192,20 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         if current_rate > self.packet_in_threshold:
             if not self.attack_detected:
-                self.last_detection_time = time.time()
+                self.last_detection_time = now
             self.attack_detected = True
             self.attack_clear_time = None  # Reset hold-down clock while still attacking
+            self.mitigation_latch_until = max(self.mitigation_latch_until, now + WINDOW_SECONDS)
         else:
             if self.attack_detected:
                 # Rate just dropped; start or continue the hold-down timer
                 if self.attack_clear_time is None:
-                    self.attack_clear_time = time.time()
-                elif time.time() - self.attack_clear_time >= holddown_seconds:
+                    self.attack_clear_time = now
+                    self.mitigation_latch_until = max(self.mitigation_latch_until, now + WINDOW_SECONDS)
+                elif now - self.attack_clear_time >= holddown_seconds:
                     self.attack_detected = False
                     self.attack_clear_time = None
+                    self.mitigation_latch_until = max(self.mitigation_latch_until, now + WINDOW_SECONDS)
             # If already False, nothing to do
         
         # Handle recovery transitions
@@ -363,7 +379,12 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
     def mitigation_active(self):
         """True when mitigation is enabled and currently engaged."""
-        return self.mitigation_enabled and (self.manual_mitigation or self.attack_detected)
+        return self.mitigation_enabled and (
+            self.manual_mitigation
+            or self.attack_detected
+            or self.recovery_manager.is_recovering()
+            or time.time() < self.mitigation_latch_until
+        )
 
     def _drop_overrate_source(self, src, src_ip, dpid, in_port):
         """Drop packets from trusted sources exceeding rate threshold during mitigation."""

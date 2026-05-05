@@ -108,8 +108,6 @@ class RestController(ControllerBase):
             - Packet-In threshold
             - last attack detection time
         """
-        self.app._update_attack_status()
-        
         data = {
             "mitigation_enabled": self.app.mitigation_enabled,
             "mitigation_active": self.app.mitigation_active(),
