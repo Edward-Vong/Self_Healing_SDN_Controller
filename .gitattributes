@@ -1,0 +1,8 @@
+# Force LF line endings for all shell scripts and Python files so they run
+# correctly on Linux (CloudLab) regardless of the developer's OS setting.
+*.sh    text eol=lf
+*.py    text eol=lf
+*.conf  text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
