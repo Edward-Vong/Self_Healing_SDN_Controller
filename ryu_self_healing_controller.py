@@ -193,7 +193,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             self.mitigation_enabled
             and not self.recovery_manager.is_recovering()
             and (has_escalated_ports or cycle_age >= ESCALATION_THRESHOLD_SECONDS)
-            and self.mitigation_active()
+            and self.attack_cycle_start_time is not None
         ):
             return "LOCKDOWN"
         if self.mitigation_active() or self.recovery_manager.is_recovering():
@@ -461,6 +461,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         )
         return self.mitigation_enabled and (
             self.manual_mitigation
+            or self.attack_cycle_start_time is not None
             or self.attack_detected
             or self.recovery_manager.is_recovering()
             or time.time() < self.mitigation_latch_until
