@@ -22,6 +22,7 @@ VALID_NEW_DELAY=40
 ATTACK_DELAY=30
 CMD_PREFIX_ATTACK=""
 CMD_PREFIX_VALID=""
+ATTACK_PYTHON_BIN="python3.8"
 IPERF=off
 IPERF_SERVER_PREFIX=""
 THRESHOLD=""
@@ -63,6 +64,7 @@ while [ $# -gt 0 ]; do
     --attack-delay) ATTACK_DELAY="$2"; shift 2;;
     --attack-cmd-prefix) CMD_PREFIX_ATTACK="$2"; shift 2;;
     --valid-cmd-prefix) CMD_PREFIX_VALID="$2"; shift 2;;
+    --attack-python-bin) ATTACK_PYTHON_BIN="$2"; shift 2;;
     --iperf) IPERF="$2"; shift 2;;
     --iperf-server-cmd-prefix) IPERF_SERVER_PREFIX="$2"; shift 2;;
     --threshold) THRESHOLD="$2"; shift 2;;
@@ -266,9 +268,9 @@ fi
 if [ "$RUN_ATTACK" = "yes" ]; then
   append_event "attack_started" "$ATTACK_METHOD" || true
 
-  # When the attack runs over SSH, PYTHON_BIN refers to the attacker node's Python (default: python3).
+  # When the attack runs over SSH, ATTACK_PYTHON_BIN refers to the attacker node's Python.
   # When running locally (Mininet), use the locally-detected interpreter.
-  _attack_python="${CMD_PREFIX_ATTACK:+python3}"
+  _attack_python="${CMD_PREFIX_ATTACK:+$ATTACK_PYTHON_BIN}"
   _attack_python="${_attack_python:-$PYTHON_BIN}"
 
   ATTACK_LAUNCH_RC=0

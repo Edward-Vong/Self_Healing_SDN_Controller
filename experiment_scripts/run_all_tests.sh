@@ -46,7 +46,7 @@ CLEAR_OVS_MODE="off"
 DURATION=75
 ATTACK_DELAY=0
 ATTACK_LENGTH=60
-ATTACK_IFACE="ovs-lan2"
+ATTACK_IFACE="${ATTACK_IFACE:-eth1}"
 SCAPY_RATE=1200
 HPING_RATE=10000
 THRESHOLD_OVERRIDE=""
@@ -56,6 +56,7 @@ TRIM_START=5        # seconds of topology-learning warmup to exclude from plots
 REPLOT_ONLY=0       # set to 1 via --replot to regenerate plots without re-running experiments
 DRY_RUN=0           # set to 1 via --dry-run to validate config/connectivity only
 PYTHON_BIN="${PYTHON_BIN:-}"
+ATTACKER_PYTHON_BIN="${ATTACKER_PYTHON_BIN:-python3.8}"
 
 if [ -z "$PYTHON_BIN" ]; then
   if command -v python3.8 >/dev/null 2>&1; then
@@ -114,6 +115,7 @@ Options:
   --project-dir DIR            Repo path on remote nodes (default from switches.conf or local)
   --controller-iface IFACE     Controller interface for utilization metrics
   --attack-iface IFACE         Attacker egress iface for scapy (default: $ATTACK_IFACE)
+  --attacker-python-bin BIN    Python executable on attacker (default: $ATTACKER_PYTHON_BIN)
   --duration SEC               Duration for main runs (default: $DURATION)
   --attack-delay SEC           Delay before attack starts (default: $ATTACK_DELAY)
   --attack-length SEC          Attack duration inside each run (default: $ATTACK_LENGTH)
@@ -147,6 +149,7 @@ while [ $# -gt 0 ]; do
     --project-dir) PROJECT_DIR_VAL="$2"; shift 2 ;;
     --controller-iface) CONTROLLER_IFACE_VAL="$2"; shift 2 ;;
     --attack-iface) ATTACK_IFACE="$2"; shift 2 ;;
+    --attacker-python-bin) ATTACKER_PYTHON_BIN="$2"; shift 2 ;;
     --duration) DURATION="$2"; shift 2 ;;
     --attack-delay) ATTACK_DELAY="$2"; shift 2 ;;
     --attack-length) ATTACK_LENGTH="$2"; shift 2 ;;
@@ -272,6 +275,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "  TRUSTED=$TRUSTED_HOST   TRUSTED_DATA_IP=$TRUSTED_DATA_IP"
   echo "  ATTACKER=$ATTACKER_HOST  ATTACKER_DATA_IP=$ATTACKER_DATA_IP"
   echo "  VICTIM=$VICTIM_HOST     VICTIM_DATA_IP=$VICTIM_DATA_IP  VALID_TARGET_IP=$VALID_TARGET_IP"
+  echo "  ATTACKER_PYTHON_BIN=$ATTACKER_PYTHON_BIN"
   echo "  ATTACK_IFACE=$ATTACK_IFACE  SIZE=256  ATTACK_LENGTH=${ATTACK_LENGTH}s  DURATION=${DURATION}s"
   echo "  SCAPY_RATE=$SCAPY_RATE  HPING_RATE=$HPING_RATE  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
   echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE  RUN_SWEEPS=$RUN_SWEEPS"
@@ -298,16 +302,30 @@ if [ "$DRY_RUN" -eq 1 ]; then
   fi
 
   log_stage "[DRY-RUN] Checking Python on attacker ($ATTACKER_HOST)..."
-  py_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'python3 --version 2>&1') && \
-    echo "  [OK]  python3: $py_ver" || { echo "  [FAIL] python3 not found on attacker" >&2; failed=$((failed+1)); }
+  py_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "$ATTACKER_PYTHON_BIN --version 2>&1") && \
+    echo "  [OK]  $ATTACKER_PYTHON_BIN: $py_ver" || { echo "  [FAIL] $ATTACKER_PYTHON_BIN not found on attacker" >&2; failed=$((failed+1)); }
 
-  log_stage "[DRY-RUN] Checking scapy on attacker ($ATTACKER_HOST)..."
-  scapy_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'python3 -c "import scapy; print(scapy.__version__)"' 2>&1) && \
-    echo "  [OK]  scapy $scapy_ver" || { echo "  [FAIL] scapy not available on attacker (run: sudo apt-get install -y python3-scapy)" >&2; failed=$((failed+1)); }
+  log_stage "[DRY-RUN] Checking scapy on attacker ($ATTACKER_HOST) with sudo $ATTACKER_PYTHON_BIN..."
+  scapy_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "sudo -n $ATTACKER_PYTHON_BIN -c 'import scapy; print(scapy.__version__)'" 2>&1) && \
+    echo "  [OK]  scapy $scapy_ver" || { echo "  [FAIL] scapy not available for sudo $ATTACKER_PYTHON_BIN on attacker (run: sudo $ATTACKER_PYTHON_BIN -m pip install scapy)" >&2; failed=$((failed+1)); }
 
   log_stage "[DRY-RUN] Checking hping3 on attacker ($ATTACKER_HOST)..."
   ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'which hping3 >/dev/null 2>&1' && \
     echo "  [OK]  hping3" || { echo "  [FAIL] hping3 not found on attacker (run: sudo apt-get install -y hping3)" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Checking attacker interface ($ATTACK_IFACE) exists and is usable..."
+  if ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "ip link show '$ATTACK_IFACE' >/dev/null 2>&1"; then
+    iface_state=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "cat /sys/class/net/$ATTACK_IFACE/operstate 2>/dev/null || echo unknown")
+    echo "  [OK]  interface $ATTACK_IFACE exists (operstate=$iface_state)"
+    if [ "$iface_state" = "down" ] || [ "$iface_state" = "dormant" ] || [ "$iface_state" = "notpresent" ]; then
+      echo "  [FAIL] attacker interface $ATTACK_IFACE is not link-up (operstate=$iface_state)" >&2
+      failed=$((failed+1))
+    fi
+  else
+    echo "  [FAIL] attacker interface $ATTACK_IFACE does not exist" >&2
+    echo "         Hint: pass --attack-iface eth1 (or set ATTACK_IFACE in switches.conf)" >&2
+    failed=$((failed+1))
+  fi
 
   log_stage "[DRY-RUN] Checking Python on controller..."
   "$PYTHON_BIN" --version >/dev/null 2>&1 && \
@@ -318,12 +336,24 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "  [OK]  SCP to attacker works" || { echo "  [FAIL] SCP to $ATTACKER_HOST failed" >&2; failed=$((failed+1)); }
 
   log_stage "[DRY-RUN] Checking reachability: trusted -> victim (VALID_TARGET_IP=$VALID_TARGET_IP)..."
-  rtt=$(ssh $SSH_OPTS "$USER_NAME@$TRUSTED_HOST" "ping -c 3 -W 2 $VALID_TARGET_IP 2>&1 | tail -1") && \
-    echo "  [OK]  ping $VALID_TARGET_IP: $rtt" || { echo "  [FAIL] trusted cannot reach victim at $VALID_TARGET_IP" >&2; failed=$((failed+1)); }
+  if ssh $SSH_OPTS "$USER_NAME@$TRUSTED_HOST" "ping -c 3 -W 2 '$VALID_TARGET_IP' >/tmp/ping_preflight_valid.log 2>&1 && grep -q ', 0% packet loss' /tmp/ping_preflight_valid.log"; then
+    rtt=$(ssh $SSH_OPTS "$USER_NAME@$TRUSTED_HOST" "tail -1 /tmp/ping_preflight_valid.log" 2>/dev/null || true)
+    echo "  [OK]  ping $VALID_TARGET_IP: $rtt"
+  else
+    echo "  [FAIL] trusted cannot reach victim at $VALID_TARGET_IP" >&2
+    ssh $SSH_OPTS "$USER_NAME@$TRUSTED_HOST" "tail -5 /tmp/ping_preflight_valid.log" 2>/dev/null || true
+    failed=$((failed+1))
+  fi
 
   log_stage "[DRY-RUN] Checking reachability: attacker -> victim (VICTIM_DATA_IP=$VICTIM_DATA_IP)..."
-  rtt=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "ping -c 3 -W 2 $VICTIM_DATA_IP 2>&1 | tail -1") && \
-    echo "  [OK]  ping $VICTIM_DATA_IP: $rtt" || { echo "  [FAIL] attacker cannot reach victim at $VICTIM_DATA_IP" >&2; failed=$((failed+1)); }
+  if ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "ping -c 3 -W 2 '$VICTIM_DATA_IP' >/tmp/ping_preflight_attack.log 2>&1 && grep -q ', 0% packet loss' /tmp/ping_preflight_attack.log"; then
+    rtt=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "tail -1 /tmp/ping_preflight_attack.log" 2>/dev/null || true)
+    echo "  [OK]  ping $VICTIM_DATA_IP: $rtt"
+  else
+    echo "  [FAIL] attacker cannot reach victim at $VICTIM_DATA_IP" >&2
+    ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "tail -5 /tmp/ping_preflight_attack.log" 2>/dev/null || true
+    failed=$((failed+1))
+  fi
 
   echo ""
   if [ "$failed" -eq 0 ]; then
@@ -412,6 +442,7 @@ _call_run_experiment() {
     --threshold "$THRESHOLD" \
     --attack-method "$method" \
     --attack-iface "$ATTACK_IFACE" \
+    --attack-python-bin "$ATTACKER_PYTHON_BIN" \
     --attack-target "$VICTIM_DATA_IP" \
     --valid-target "$VALID_TARGET_IP" \
     --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
