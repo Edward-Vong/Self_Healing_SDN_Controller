@@ -253,7 +253,13 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if delta_wall <= 0:
             return round(self._cpu_percent, 2)
 
-        self._cpu_percent = max(0.0, (delta_proc / delta_wall) * 100.0)
+        # Ignore ultra-short sampling windows caused by concurrent pollers.
+        if delta_wall < 0.75:
+            return round(self._cpu_percent, 2)
+
+        sample = max(0.0, min(100.0, (delta_proc / delta_wall) * 100.0))
+        # EWMA smoothing to reduce one-sample spikes from bursty controller load.
+        self._cpu_percent = (0.7 * self._cpu_percent) + (0.3 * sample)
         return round(self._cpu_percent, 2)
             
     def get_stats(self):

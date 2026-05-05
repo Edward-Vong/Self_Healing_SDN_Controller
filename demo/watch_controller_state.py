@@ -193,11 +193,8 @@ def run_verbose(args, fh):
 
 def run_flat(args, fh):
     required_rate = max(0.0, args.target_pps * args.rate_tolerance)
-    hold_start = None
-    reached_in = None
     start = time.time()
     deadline = start + max(0.1, args.duration)
-    reach_deadline = start + max(0.1, args.reach_timeout)
 
     samples = 0
     pi_sum = 0.0
@@ -207,14 +204,19 @@ def run_flat(args, fh):
 
     prev_mitigation = None
     prev_escalated = set()
-    success_reported = False
-    timed_out = False
+    saw_threshold = False
+    saw_mitigation_active = False
+    saw_port_closed = False
+    saw_back_to_meter = False
+    saw_back_to_normal = False
+
+    normal_start = None
+    normal_hold_seconds = max(3.0, args.interval * 3)
 
     log("Mode          : FLAT", fh)
     log("Target PPS    : {} pps".format(int(args.target_pps) if args.target_pps >= 1 else args.target_pps), fh)
     log("Rate tolerance: {:.0f}% of target".format(args.rate_tolerance * 100.0), fh)
-    log("Hold duration : {}s at or above required".format(int(args.hold_duration)), fh)
-    log("Reach timeout : {}s max to reach/hold target".format(int(args.reach_timeout)), fh)
+    log("Goal          : threshold -> mitigation -> port close -> recovery", fh)
     log("", fh)
     log("  Target PPS   Avg PI Rate   Avg CPU %", fh)
     log("--------------------------------------", fh)
@@ -259,57 +261,42 @@ def run_flat(args, fh):
             fh,
         )
 
+        if not saw_threshold and required_rate > 0.0 and pi_rate >= required_rate:
+            saw_threshold = True
+            log("ALERT threshold reached: pi_rate {:.2f}/s >= {:.2f}/s".format(pi_rate, required_rate), fh)
+
         if prev_mitigation is None:
             prev_mitigation = mitigation_active
+            if mitigation_active:
+                saw_mitigation_active = True
         elif mitigation_active != prev_mitigation:
             state = "ACTIVE" if mitigation_active else "INACTIVE"
             log("ALERT mitigation {}".format(state), fh)
             prev_mitigation = mitigation_active
+            if mitigation_active:
+                saw_mitigation_active = True
 
         new_escalated = sorted(escalated - prev_escalated)
         for dpid, port in new_escalated:
             log("ALERT port fully closed: dpid={} port={}".format(dpid, port), fh)
+            saw_port_closed = True
+
+        if saw_port_closed and prev_escalated and not escalated and mitigation_active and not saw_back_to_meter:
+            saw_back_to_meter = True
+            log("ALERT lockdown lifted: back to meter mode", fh)
+
         prev_escalated = escalated
 
-        now = time.time()
-        if required_rate > 0.0 and pi_rate >= required_rate:
-            if hold_start is None:
-                hold_start = now
-                if reached_in is None:
-                    reached_in = hold_start - start
-            elif now - hold_start >= args.hold_duration and not success_reported:
-                avg_pi = (pi_sum / samples) if samples else 0.0
-                avg_cpu = (cpu_sum / samples) if samples else 0.0
-                log(
-                    "-> avg={:.2f}/s  peak={:.2f}/s  avg_cpu={:.2f}%  peak_cpu={:.2f}%  reached_in={:.2f}s  required>={:.2f}/s".format(
-                        avg_pi,
-                        pi_peak,
-                        avg_cpu,
-                        cpu_peak,
-                        reached_in if reached_in is not None else 0.0,
-                        required_rate,
-                    ),
-                    fh,
-                )
-                success_reported = True
+        if saw_mitigation_active and not escalated and not mitigation_active:
+            if normal_start is None:
+                normal_start = time.time()
+            elif time.time() - normal_start >= normal_hold_seconds:
+                saw_back_to_normal = True
         else:
-            hold_start = None
+            normal_start = None
 
-        if not success_reported and now >= reach_deadline:
-            avg_pi = (pi_sum / samples) if samples else 0.0
-            avg_cpu = (cpu_sum / samples) if samples else 0.0
-            log(
-                "-> avg={:.2f}/s  peak={:.2f}/s  avg_cpu={:.2f}%  peak_cpu={:.2f}%  FAILED to hold >= {:.2f}/s within {}s".format(
-                    avg_pi,
-                    pi_peak,
-                    avg_cpu,
-                    cpu_peak,
-                    required_rate,
-                    int(args.reach_timeout),
-                ),
-                fh,
-            )
-            timed_out = True
+        # Full end-to-end transition reached.
+        if saw_threshold and saw_mitigation_active and saw_port_closed and (saw_back_to_meter or saw_back_to_normal):
             break
 
         time.sleep(max(0.2, args.interval))
@@ -332,12 +319,19 @@ def run_flat(args, fh):
         fh,
     )
     log("==================================================================", fh)
-    if timed_out:
-        log("RESULT: FAIL (target hold not reached in time)", fh)
-    elif success_reported:
-        log("RESULT: PASS (target hold reached)", fh)
+    if saw_threshold and saw_mitigation_active and saw_port_closed and (saw_back_to_meter or saw_back_to_normal):
+        log("RESULT: PASS (observed threshold -> mitigation -> lockdown -> recovery transition)", fh)
     else:
-        log("RESULT: INCOMPLETE (watch ended before PASS/FAIL condition)", fh)
+        missing = []
+        if not saw_threshold:
+            missing.append("threshold reached")
+        if not saw_mitigation_active:
+            missing.append("mitigation active")
+        if not saw_port_closed:
+            missing.append("port fully closed")
+        if not (saw_back_to_meter or saw_back_to_normal):
+            missing.append("recovery (meter/normal)")
+        log("RESULT: PARTIAL (missing: {})".format(", ".join(missing)), fh)
 
 
 def main():
