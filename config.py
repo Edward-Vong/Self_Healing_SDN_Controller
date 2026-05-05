@@ -1,5 +1,5 @@
 INSTANCE_NAME = "api_app"
-WINDOW_SECONDS = 10
+WINDOW_SECONDS = 3
 PACKET_IN_THRESHOLD = 800  # ~62% of observed 1300 PI/s ceiling; leaves headroom for mitigation logic
 CONTROLLER_NAME = "self healing sdn api app"
 
@@ -14,11 +14,11 @@ LEARNING_PRIORITY = 1
 
 # Mitigation manager constants
 ATTACK_METER_RATE = 100  # Rate limit for attack flows (packets per second)
-ESCALATION_THRESHOLD_SECONDS = 30  # Escalate meter to drop after this duration
-RECOVERY_WINDOW_SECONDS = 60  # Total time for gradual recovery
-HOLDDOWN_WINDOWS = 2  # Keep attack_detected=True for this many WINDOW_SECONDS after rate drops
-MITIGATION_MIN_ACTIVE_WINDOWS = 2  # Keep mitigation active for at least this many WINDOW_SECONDS once triggered
-RECOVERY_QUIET_WINDOWS = 2  # Require this many WINDOW_SECONDS of quiet before entering recovery
+ESCALATION_THRESHOLD_SECONDS = 8  # Escalate meter to drop quickly enough for the 45s demo
+RECOVERY_WINDOW_SECONDS = 12  # Total time for gradual recovery during the 45s demo
+HOLDDOWN_WINDOWS = 1  # Keep attack_detected=True for this many WINDOW_SECONDS after rate drops
+MITIGATION_MIN_ACTIVE_WINDOWS = 1  # Keep mitigation active for at least this many WINDOW_SECONDS once triggered
+RECOVERY_QUIET_WINDOWS = 1  # Require this many WINDOW_SECONDS of quiet before entering recovery
 
 
 def default_host_record():
