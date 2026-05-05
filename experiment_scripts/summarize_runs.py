@@ -48,18 +48,24 @@ def maxv(values):
     return max(vals) if vals else 0.0
 
 
+def _sub(run_dir, subdir, name):
+    """Resolve a file: prefer subdir/ inside run_dir, fall back to run_dir root."""
+    p = run_dir / subdir / name
+    return p if p.exists() else run_dir / name
+
+
 def parse_ping_csv_or_log(run_dir, name):
-    csv_path = run_dir / "{}.csv".format(name)
-    rows = read_csv(csv_path)
+    csv_p = _sub(run_dir, "csv", "{}.csv".format(name))
+    rows = read_csv(csv_p)
     if rows:
         return [(fnum(r.get("t")), fnum(r.get("rtt_ms"))) for r in rows]
 
-    log_path = run_dir / "{}.log".format(name)
-    if not log_path.exists():
+    log_p = _sub(run_dir, "logs", "{}.log".format(name))
+    if not log_p.exists():
         return []
     out = []
     idx = 0
-    with log_path.open(errors="ignore") as f:
+    with log_p.open(errors="ignore") as f:
         for line in f:
             m = re.search(r"time=([0-9.]+)\s*ms", line)
             if m:
@@ -69,11 +75,11 @@ def parse_ping_csv_or_log(run_dir, name):
 
 
 def parse_iperf_log(run_dir, name):
-    path = run_dir / "{}.log".format(name)
-    if not path.exists():
+    p = _sub(run_dir, "logs", "{}.log".format(name))
+    if not p.exists():
         return []
     vals = []
-    with path.open(errors="ignore") as f:
+    with p.open(errors="ignore") as f:
         for line in f:
             if "bits/sec" not in line:
                 continue
@@ -103,9 +109,9 @@ def summarize_run(run_dir):
     attack_length = fnum(attack_length_raw, duration - attack_delay) if str(attack_length_raw) else duration - attack_delay
     attack_end = attack_delay + attack_length
 
-    metrics = read_csv(run_dir / "controller_metrics.csv")
-    status = read_csv(run_dir / "attack_status.csv")
-    mit = read_csv(run_dir / "mitigation_metrics.csv")
+    metrics = read_csv(_sub(run_dir, "csv", "controller_metrics.csv"))
+    status = read_csv(_sub(run_dir, "csv", "attack_status.csv"))
+    mit = read_csv(_sub(run_dir, "csv", "mitigation_metrics.csv"))
 
     attack_metrics = [r for r in metrics if attack_delay <= fnum(r.get("t")) <= attack_end]
     attack_status = [r for r in status if attack_delay <= fnum(r.get("t")) <= attack_end]

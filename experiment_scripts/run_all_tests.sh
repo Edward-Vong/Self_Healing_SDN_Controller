@@ -4,27 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
-STATUS_FILE="$ROOT_DIR/results/last_run_status.json"
 CURRENT_STAGE="startup"
 
 RESULTS_DIR="$ROOT_DIR/results"
 mkdir -p "$RESULTS_DIR"
 
 RUN_STARTED_AT="$(date -Iseconds)"
-STATUS_FILE="$RESULTS_DIR/last_run_status.txt"
-
-write_status_file() {
-  local status="$1"
-  local code="$2"
-  local stage="$3"
-  local message="$4"
-  mkdir -p "$(dirname "$STATUS_FILE")"
-  # Write both a human-readable .txt and a machine-readable .json.
-  local json_file="$RESULTS_DIR/last_run_status.json"
-  cat > "$json_file" <<EOF_JSON
-{"status":"$status","exit_code":$code,"stage":"$stage","message":"$message","timestamp":"$(date -Iseconds)"}
-EOF_JSON
-}
+STATUS_FILE="$RESULTS_DIR/last_run_status.json"
 
 if [ -f "$SWITCHES_CONF" ]; then
   # shellcheck disable=SC1090
@@ -47,7 +33,7 @@ CONTROLLER_IFACE_VAL="${CONTROLLER_IFACE:-eth0}"
 PROJECT_DIR_VAL="${PROJECT_DIR:-$ROOT_DIR}"
 
 # Experiment defaults (fast profile).
-RUN_BASELINE_CONTROL=off
+RUN_BASELINE_CONTROL=on
 RUN_SATURATION=on
 RUN_CORE=on
 RUN_SWEEPS=on
@@ -59,7 +45,7 @@ ATTACK_LENGTH=45
 ATTACK_IFACE="ovs-lan2"
 SCAPY_RATE=1200
 HPING_RATE=10000
-THRESHOLD_OVERRIDE="50"
+THRESHOLD_OVERRIDE=""
 THRESHOLD_SET_BY_USER=0
 FAILED_RUNS=""
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -84,13 +70,9 @@ write_status() {
   local status="$1"
   local code="$2"
   local message="$3"
-  {
-    echo "status=$status"
-    echo "exit_code=$code"
-    echo "started_at=$RUN_STARTED_AT"
-    echo "finished_at=$(date -Iseconds)"
-    echo "message=$message"
-  } > "$STATUS_FILE"
+  cat > "$STATUS_FILE" <<EOF_JSON
+{"status":"$status","exit_code":$code,"stage":"$CURRENT_STAGE","message":"$message","started_at":"$RUN_STARTED_AT","finished_at":"$(date -Iseconds)"}
+EOF_JSON
 }
 
 on_err() {
@@ -105,7 +87,6 @@ on_err() {
 
 trap on_err ERR
 write_status "running" "0" "run_all_tests started"
-write_status_file "running" 0 "startup" "run_all_tests started"
 
 usage() {
   cat <<EOF
@@ -171,8 +152,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Fast profile defaults threshold to 50. If baseline-control is explicitly enabled and
-# user did not set --threshold, clear override so baseline can derive threshold.
+# Baseline-control derives threshold from measured traffic. If user set --threshold
+# explicitly, that value takes precedence; otherwise clear any override so baseline runs.
 if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ "$THRESHOLD_SET_BY_USER" -eq 0 ]; then
   THRESHOLD_OVERRIDE=""
 fi
@@ -278,9 +259,9 @@ if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
   }
   log_stage "[INFO] Derived threshold=$THRESHOLD"
   # Enforce a minimum to avoid false-positive mitigation on all runs.
-  if [ "${THRESHOLD:-0}" -lt 50 ] 2>/dev/null; then
-    log_stage "[WARN] Derived threshold ($THRESHOLD) is dangerously low; raising to minimum 50"
-    THRESHOLD=50
+  if [ "${THRESHOLD:-0}" -lt 100 ] 2>/dev/null; then
+    log_stage "[WARN] Derived threshold ($THRESHOLD) is dangerously low; raising to minimum 100"
+    THRESHOLD=100
   fi
 elif [ -z "$THRESHOLD" ]; then
   THRESHOLD=300
@@ -296,7 +277,8 @@ if [ "$RUN_SATURATION" = "on" ]; then
     --out "$RESULTS_DIR/saturation_analysis" \
     --target "$VICTIM_DATA_IP" \
     --iface "$ATTACK_IFACE" \
-    --attack-method scapy \
+    --attack-method hping3 \
+    --size 256 \
     --cmd-prefix "$SSH_ATTACKER" \
     --rtt-cmd-prefix "$SSH_TRUSTED" \
     --step-duration 15 \
@@ -306,26 +288,16 @@ if [ "$RUN_SATURATION" = "on" ]; then
     || log_stage "[WARN] Saturation finder failed; continuing (non-fatal)"
 fi
 
-run_main_experiment() {
-  local name="$1"
-  local rate="$2"
-  local mitigation="$3"
-  local method="$4"
-  local size="$5"
-  local attempt_rc=0
-  local attempt_name="$name"
-
-  log_stage "[INFO] Starting run: $name (duration ${DURATION}s + setup/recovery)."
-  clear_remote_ovs_flows
-
-  set +e
+# Common run_experiment.sh invocation. Args: name rate size mitigation method attack_length iperf_mode
+_call_run_experiment() {
+  local name="$1" rate="$2" size="$3" mitigation="$4" method="$5" attack_length="$6" iperf_mode="$7"
   RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
-    --name "$attempt_name" \
+    --name "$name" \
     --rate "$rate" \
     --size "$size" \
     --duration "$DURATION" \
     --attack-delay "$ATTACK_DELAY" \
-    --attack-length "$ATTACK_LENGTH" \
+    --attack-length "$attack_length" \
     --mitigation "$mitigation" \
     --threshold "$THRESHOLD" \
     --attack-method "$method" \
@@ -338,7 +310,7 @@ run_main_experiment() {
     --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
     --valid-cmd-prefix "$CMD_PREFIX_VALID" \
     --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
-    --iperf on \
+    --iperf "$iperf_mode" \
     --clear-ovs off \
     --user "$USER_NAME" \
     --trusted "$TRUSTED_HOST" \
@@ -346,59 +318,38 @@ run_main_experiment() {
     --victim "$VICTIM_HOST" \
     --project-dir "$PROJECT_DIR_VAL" \
     2>&1 | tee -a "$RESULTS_DIR/${name}.driver.log"
+}
+
+run_main_experiment() {
+  local name="$1" rate="$2" mitigation="$3" method="$4" size="$5"
+  local attempt_rc=0 attempt_name="$name"
+
+  log_stage "[INFO] Starting run: $name (duration ${DURATION}s)"
+  clear_remote_ovs_flows
+
+  set +e
+  _call_run_experiment "$name" "$rate" "$size" "$mitigation" "$method" "$ATTACK_LENGTH" on
   attempt_rc=${PIPESTATUS[0]}
   set -e
 
   if [ "$attempt_rc" -ne 0 ] && { [ "$attempt_rc" -eq 143 ] || [ "$attempt_rc" -eq 137 ]; }; then
-    log_stage "[WARN] Run $name failed with signal-style exit $attempt_rc; retrying once with iperf off"
+    log_stage "[WARN] Run $name signal-exit $attempt_rc; retrying once with iperf off"
     attempt_name="${name}_retry"
     clear_remote_ovs_flows
     set +e
-    RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
-      --name "$attempt_name" \
-      --rate "$rate" \
-      --size "$size" \
-      --duration "$DURATION" \
-      --attack-delay "$ATTACK_DELAY" \
-      --attack-length "$ATTACK_LENGTH" \
-      --mitigation "$mitigation" \
-      --threshold "$THRESHOLD" \
-      --attack-method "$method" \
-      --attack-iface "$ATTACK_IFACE" \
-      --attack-target "$VICTIM_DATA_IP" \
-      --valid-target "$VICTIM_DATA_IP" \
-      --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
-      --controller "$CONTROLLER_URL" \
-      --controller-iface "$CONTROLLER_IFACE_VAL" \
-      --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
-      --valid-cmd-prefix "$CMD_PREFIX_VALID" \
-      --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
-      --iperf off \
-      --clear-ovs off \
-      --user "$USER_NAME" \
-      --trusted "$TRUSTED_HOST" \
-      --attacker "$ATTACKER_HOST" \
-      --victim "$VICTIM_HOST" \
-      --project-dir "$PROJECT_DIR_VAL" \
-      2>&1 | tee -a "$RESULTS_DIR/${name}.driver.log"
+    _call_run_experiment "$attempt_name" "$rate" "$size" "$mitigation" "$method" "$ATTACK_LENGTH" off
     attempt_rc=${PIPESTATUS[0]}
     set -e
   fi
 
   if [ "$attempt_rc" -ne 0 ]; then
-    log_stage "[WARN] Run $name failed with exit code $attempt_rc (last attempt: $attempt_name); continuing to next run"
+    log_stage "[WARN] Run $name failed (exit $attempt_rc, last attempt: $attempt_name); continuing"
     show_run_debug_tail "$attempt_name"
-    if [ -z "$FAILED_RUNS" ]; then
-      FAILED_RUNS="$attempt_name:$attempt_rc"
-    else
-      FAILED_RUNS="$FAILED_RUNS,$attempt_name:$attempt_rc"
-    fi
+    FAILED_RUNS="${FAILED_RUNS:+$FAILED_RUNS,}$attempt_name:$attempt_rc"
+  elif [ "$attempt_name" != "$name" ]; then
+    log_stage "[INFO] Completed run: $name (via retry: $attempt_name)"
   else
-    if [ "$attempt_name" = "$name" ]; then
-      log_stage "[INFO] Completed run: $name"
-    else
-      log_stage "[INFO] Completed run: $name (via retry: $attempt_name)"
-    fi
+    log_stage "[INFO] Completed run: $name"
   fi
 }
 
@@ -426,37 +377,11 @@ show_run_debug_tail() {
 }
 
 run_baseline_no_attack_once() {
-  local attempt="$1"
-  local iperf_mode="$2"
+  local attempt="$1" iperf_mode="$2"
   log_stage "[INFO] baseline_no_attack attempt=$attempt iperf=$iperf_mode"
   clear_remote_ovs_flows
   set +e
-  RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
-    --name baseline_no_attack \
-    --rate 0 \
-    --size 64 \
-    --duration "$DURATION" \
-    --attack-delay "$ATTACK_DELAY" \
-    --attack-length 0 \
-    --mitigation on \
-    --threshold "$THRESHOLD" \
-    --attack-method hping3 \
-    --attack-target "$VICTIM_DATA_IP" \
-    --valid-target "$VICTIM_DATA_IP" \
-    --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
-    --controller "$CONTROLLER_URL" \
-    --controller-iface "$CONTROLLER_IFACE_VAL" \
-    --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
-    --valid-cmd-prefix "$CMD_PREFIX_VALID" \
-    --iperf-server-cmd-prefix "$CMD_PREFIX_IPERF" \
-    --iperf "$iperf_mode" \
-    --clear-ovs off \
-    --user "$USER_NAME" \
-    --trusted "$TRUSTED_HOST" \
-    --attacker "$ATTACKER_HOST" \
-    --victim "$VICTIM_HOST" \
-    --project-dir "$PROJECT_DIR_VAL" \
-    2>&1 | tee -a "$RESULTS_DIR/baseline_no_attack.driver.log"
+  _call_run_experiment "baseline_no_attack" 0 64 on hping3 0 "$iperf_mode"
   local rc=${PIPESTATUS[0]}
   set -e
   return "$rc"
@@ -489,8 +414,9 @@ log_stage "[INFO] Completed threshold tuning baseline"
 if [ "$RUN_CORE" = "on" ]; then
   log_stage "[INFO] Running core comparison suite"
   run_main_experiment "hping_attack_mit_off" "$HPING_RATE" off hping3 64
-  run_main_experiment "hping_attack_mit_on" "$HPING_RATE" on hping3 64
-  run_main_experiment "scapy_attack_mit_on" "$SCAPY_RATE" on scapy 64
+  run_main_experiment "hping_attack_mit_on"  "$HPING_RATE" on  hping3 64
+  run_main_experiment "scapy_attack_mit_off" "$SCAPY_RATE" off scapy  64
+  run_main_experiment "scapy_attack_mit_on"  "$SCAPY_RATE" on  scapy  64
 fi
 
 if [ "$RUN_SWEEPS" = "on" ]; then
@@ -521,11 +447,9 @@ log_stage "[DONE] Full experiment suite complete"
 log_stage "[DONE] Results directory: $RESULTS_DIR"
 if [ -n "$FAILED_RUNS" ]; then
   log_stage "[WARN] Some runs failed but suite continued: $FAILED_RUNS"
-  write_status "partial" "0" "run_all_tests completed with failed runs: $FAILED_RUNS"
-  write_status_file "partial" 0 "done" "completed with failed runs: $FAILED_RUNS"
+  write_status "partial" "0" "completed with failed runs: $FAILED_RUNS"
   echo "FINAL_RESULT=partial"
 else
   write_status "success" "0" "run_all_tests completed successfully"
-  write_status_file "success" 0 "done" "completed"
   echo "FINAL_RESULT=success"
 fi

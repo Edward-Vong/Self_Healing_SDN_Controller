@@ -11,6 +11,10 @@ CMD_PREFIX=""
 METHOD="hping3"
 IFACE="h2-eth0"
 REMOTE_SCRIPT_DIR=""
+# Python binary on the node where the attack actually executes.
+# When CMD_PREFIX is an SSH prefix, this must be available on the *remote* node.
+# Defaults to python3 (safe default for most Ubuntu attacker nodes).
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -24,6 +28,7 @@ while [ $# -gt 0 ]; do
     --method) METHOD="$2"; shift 2;;
     --iface) IFACE="$2"; shift 2;;
     --remote-script-dir) REMOTE_SCRIPT_DIR="$2"; shift 2;;
+    --python-bin) PYTHON_BIN="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -43,7 +48,7 @@ fi
 
 case "$METHOD" in
   scapy)
-    CMD="sudo python3 '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method scapy --iface '$IFACE' --rate '$RATE' --size '$SIZE' --duration '$DURATION' --log '$ATTACK_LOG'"
+    CMD="sudo '$PYTHON_BIN' '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method scapy --iface '$IFACE' --rate '$RATE' --size '$SIZE' --duration '$DURATION' --log '$ATTACK_LOG'"
     ;;
   hping3)
     if [ -z "$TARGET" ]; then
@@ -56,9 +61,9 @@ case "$METHOD" in
     ;;
   udp)
     if [ -n "$TARGET" ]; then
-      CMD="python3 '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method udp --rate '$RATE' --size '$SIZE' --duration '$DURATION' --target '$TARGET' --log '$ATTACK_LOG'"
+      CMD="'$PYTHON_BIN' '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method udp --rate '$RATE' --size '$SIZE' --duration '$DURATION' --target '$TARGET' --log '$ATTACK_LOG'"
     else
-      CMD="python3 '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method udp --rate '$RATE' --size '$SIZE' --duration '$DURATION' --target-prefix '$TARGET_PREFIX' --log '$ATTACK_LOG'"
+      CMD="'$PYTHON_BIN' '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method udp --rate '$RATE' --size '$SIZE' --duration '$DURATION' --target-prefix '$TARGET_PREFIX' --log '$ATTACK_LOG'"
     fi
     ;;
   *)

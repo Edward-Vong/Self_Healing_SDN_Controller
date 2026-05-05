@@ -17,7 +17,7 @@ import sys
 import time
 
 
-def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, iface, size=64, rtt_cmd_prefix=''):
+def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, iface, size=256, rtt_cmd_prefix='', python_bin='python3'):
     """Run attack at a single rate; return avg RTT and max CPU."""
     run_dir = os.path.join(out_dir, "rate_{}_pps".format(rate))
     os.makedirs(run_dir, exist_ok=True)
@@ -25,8 +25,11 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
     # Prepare attack command
     if attack_method == "scapy":
         attack_cmd = (
-            "sudo python3 packetin_attack.py --method scapy --iface {} "
-            "--rate {} --size {} --duration {} --target {}".format(iface, rate, size, duration, target)
+            "cd '{script_dir}' && sudo {python} packetin_attack.py --method scapy --iface {iface} "
+            "--rate {rate} --size {size} --duration {dur} --target {target}".format(
+                script_dir=os.path.dirname(os.path.abspath(__file__)),
+                python=python_bin,
+                iface=iface, rate=rate, size=size, dur=duration, target=target)
         )
     elif attack_method == "hping3":
         attack_cmd = (
@@ -35,8 +38,8 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
         )
     else:
         attack_cmd = (
-            "python3 packetin_attack.py --method udp --rate {} "
-            "--size {} --duration {} --target {}".format(rate, size, duration, target)
+            "{} packetin_attack.py --method udp --rate {} "
+            "--size {} --duration {} --target {}".format(python_bin, rate, size, duration, target)
         )
     
     if cmd_prefix:
@@ -53,6 +56,13 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
             stderr=subprocess.STDOUT
         )
     
+    # Warm up ARP/flow-table before measurement so the first ping isn't a cold miss.
+    if rtt_cmd_prefix:
+        warmup_cmd = "{} 'ping -c 3 -W 2 -q {}'".format(rtt_cmd_prefix, target)
+    else:
+        warmup_cmd = "ping -c 3 -W 2 -q {}".format(target)
+    subprocess.run(warmup_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     # Run ping for RTT measurement. If rtt_cmd_prefix is provided (e.g. 'ssh user@trusted'),
     # run the ping on that remote node so it probes the dataplane from inside the experiment LAN.
     ping_log = os.path.join(run_dir, "ping.log")
@@ -111,9 +121,11 @@ def main():
     p.add_argument('--step-duration', type=int, default=30, help='Duration per rate step (seconds)')
     p.add_argument('--rtt-threshold-ms', type=float, default=50, help='RTT threshold for saturation')
     p.add_argument('--loss-threshold-percent', type=float, default=5, help='Packet loss threshold for saturation')
-    p.add_argument('--rates', default='1000,5000,10000,20000,50000', 
+    p.add_argument('--rates', default='1000,5000,10000,20000,50000',
                    help='Comma-separated list of attack rates to test (pps)')
-    
+    p.add_argument('--size', type=int, default=256, help='Packet size in bytes for the attack')
+    p.add_argument('--python-bin', default='python3', help='Python interpreter on the attacker node (for scapy/udp methods)')
+
     args = p.parse_args()
     
     os.makedirs(args.out, exist_ok=True)
@@ -147,7 +159,9 @@ def main():
             attack_method=args.attack_method,
             target=args.target,
             iface=args.iface,
+            size=args.size,
             rtt_cmd_prefix=args.rtt_cmd_prefix,
+            python_bin=args.python_bin,
         )
         results.append(result)
         

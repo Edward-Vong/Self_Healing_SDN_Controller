@@ -28,6 +28,22 @@ def event_times(events, names):
             times[name] = num(e, "t")
     return times
 
+def _csv(d, name):
+    """Resolve a CSV/JSON data file: prefer csv/ subdir (post-run), fall back to root."""
+    sub = os.path.join(d, 'csv', name)
+    return sub if os.path.exists(sub) else os.path.join(d, name)
+
+def _log(d, name):
+    """Resolve a log file: prefer logs/ subdir (post-run), fall back to root."""
+    sub = os.path.join(d, 'logs', name)
+    return sub if os.path.exists(sub) else os.path.join(d, name)
+
+def _csv_write(d, name):
+    """Path for a derived CSV to write; always places it in csv/ subdir."""
+    csv_dir = os.path.join(d, 'csv')
+    os.makedirs(csv_dir, exist_ok=True)
+    return os.path.join(csv_dir, name)
+
 def save_line(rows, x, ys, labels, title, ylabel, out):
     if not rows: return False
     plt.figure()
@@ -37,13 +53,15 @@ def save_line(rows, x, ys, labels, title, ylabel, out):
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument('input_dir'); p.add_argument('--output', default='')
-    a=p.parse_args(); d=a.input_dir; out=a.output or d; os.makedirs(out, exist_ok=True)
-   
-    metrics=read_csv(os.path.join(d,'controller_metrics.csv'))
-    status=read_csv(os.path.join(d,'attack_status.csv'))
-    mit=read_csv(os.path.join(d,'mitigation_metrics.csv'))
-    link=read_csv(os.path.join(d,'controller_link_util.csv'))
-    events=read_csv(os.path.join(d,'events.csv'))
+    a=p.parse_args(); d=a.input_dir
+    out=a.output or os.path.join(d,'plots')
+    os.makedirs(out, exist_ok=True)
+
+    metrics=read_csv(_csv(d,'controller_metrics.csv'))
+    status=read_csv(_csv(d,'attack_status.csv'))
+    mit=read_csv(_csv(d,'mitigation_metrics.csv'))
+    link=read_csv(_csv(d,'controller_link_util.csv'))
+    events=read_csv(_csv(d,'events.csv'))
     
     made=[]
     
@@ -201,7 +219,8 @@ def main():
         plt.close()
         made.append(path)
     
-    if link and save_line(link,'t',['total_mbps','rx_mbps','tx_mbps'],['total Mbps','rx Mbps','tx Mbps'],'Controller link utilization over time','Mbps',os.path.join(out,'controller_link_util_over_time.png')): made.append(os.path.join(out,'controller_link_util_over_time.png'))
+    lutil_png=os.path.join(out,'controller_link_util_over_time.png')
+    if link and save_line(link,'t',['total_mbps','rx_mbps','tx_mbps'],['total Mbps','rx Mbps','tx Mbps'],'Controller link utilization over time','Mbps',lutil_png): made.append(lutil_png)
     # parse ping RTT logs — one combined plot covering both existing and new legitimate traffic flows
     import json, re
 
@@ -220,7 +239,7 @@ def main():
     has_ping = False
 
     for name, offset in [('ping_existing', 0), ('ping_new', valid_new_delay)]:
-        log = os.path.join(d, '{}.log'.format(name))
+        log = _log(d, '{}.log'.format(name))
         rows = []
 
         if os.path.exists(log):
@@ -237,7 +256,7 @@ def main():
 
         if rows:
             has_ping = True
-            csvp = os.path.join(d, '{}.csv'.format(name))
+            csvp = _csv_write(d, '{}.csv'.format(name))
             with open(csvp, 'w', newline='') as f:
                 w = csv.DictWriter(f, fieldnames=['t', 'rtt_ms'])
                 w.writeheader()
@@ -323,11 +342,11 @@ def main():
     plt.figure(figsize=(14, 6))
     has_iperf = False
     for log_name, label, offset in iperf_series:
-        rows = parse_iperf_log(os.path.join(d, '{}.log'.format(log_name)), offset)
+        rows = parse_iperf_log(_log(d, '{}.log'.format(log_name)), offset)
         if not rows:
             continue
         has_iperf = True
-        csvp = os.path.join(d, '{}.csv'.format(log_name))
+        csvp = _csv_write(d, '{}.csv'.format(log_name))
         with open(csvp, 'w', newline='') as f:
             w = csv.DictWriter(f, fieldnames=['t', 'mbps'])
             w.writeheader()

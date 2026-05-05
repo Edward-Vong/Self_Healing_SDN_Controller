@@ -180,19 +180,13 @@ run_log "[INFO] Starting run with PID=$$ duration=$DURATION attack_delay=$ATTACK
 append_event() {
   local event="$1"
   local value="${2:-}"
-  local now ts t
+  local now t
   now=$(date +%s.%N)
-  ts="$now"
-  t=$("$PYTHON_BIN" - <<PY
-start = float('$START_EPOCH')
-now = float('$now')
-print(round(now - start, 3))
-PY
-)
+  t=$(awk "BEGIN {printf \"%.3f\", $now - $START_EPOCH}")
   if [ ! -f "$OUT/events.csv" ]; then
     echo "event,t,timestamp,value" > "$OUT/events.csv"
   fi
-  echo "$event,$t,$ts,$value" >> "$OUT/events.csv"
+  echo "$event,$t,$now,$value" >> "$OUT/events.csv"
 }
 
 # reset and configure controller if reachable
@@ -263,40 +257,33 @@ else
   ATTACK_DURATION=$((DURATION-ATTACK_DELAY))
 fi
 
-RUN_ATTACK=$("$PYTHON_BIN" - <<PY_CHECK
-rate = float("$RATE")
-dur = float("$ATTACK_DURATION")
-print("yes" if rate > 0 and dur > 0 else "no")
-PY_CHECK
-)
+if [ "${RATE:-0}" -gt 0 ] && [ "${ATTACK_DURATION:-0}" -gt 0 ]; then
+  RUN_ATTACK=yes
+else
+  RUN_ATTACK=no
+fi
 
 if [ "$RUN_ATTACK" = "yes" ]; then
   append_event "attack_started" "$ATTACK_METHOD" || true
 
+  # When the attack runs over SSH, PYTHON_BIN refers to the attacker node's Python (default: python3).
+  # When running locally (Mininet), use the locally-detected interpreter.
+  _attack_python="${CMD_PREFIX_ATTACK:+python3}"
+  _attack_python="${_attack_python:-$PYTHON_BIN}"
+
   ATTACK_LAUNCH_RC=0
-  if [ -n "$ATTACK_TARGET" ]; then
-    bash "$SCRIPT_DIR/start_attack.sh" \
-      --rate "$RATE" \
-      --size "$SIZE" \
-      --duration "$ATTACK_DURATION" \
-      --target "$ATTACK_TARGET" \
-      --out "$OUT" \
-      --cmd-prefix "$CMD_PREFIX_ATTACK" \
-      --method "$ATTACK_METHOD" \
-      --iface "$ATTACK_IFACE" \
-      --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
-  else
-    bash "$SCRIPT_DIR/start_attack.sh" \
-      --rate "$RATE" \
-      --size "$SIZE" \
-      --duration "$ATTACK_DURATION" \
-      --target-prefix "$ATTACK_TARGET_PREFIX" \
-      --out "$OUT" \
-      --cmd-prefix "$CMD_PREFIX_ATTACK" \
-      --method "$ATTACK_METHOD" \
-      --iface "$ATTACK_IFACE" \
-      --remote-script-dir "$REMOTE_SCRIPT_DIR" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
-  fi
+  bash "$SCRIPT_DIR/start_attack.sh" \
+    --rate "$RATE" \
+    --size "$SIZE" \
+    --duration "$ATTACK_DURATION" \
+    --target "$ATTACK_TARGET" \
+    --target-prefix "$ATTACK_TARGET_PREFIX" \
+    --out "$OUT" \
+    --cmd-prefix "$CMD_PREFIX_ATTACK" \
+    --method "$ATTACK_METHOD" \
+    --iface "$ATTACK_IFACE" \
+    --remote-script-dir "$REMOTE_SCRIPT_DIR" \
+    --python-bin "$_attack_python" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
 
   if [ "$ATTACK_LAUNCH_RC" -ne 0 ]; then
     run_log "[WARN] start_attack.sh exited with code $ATTACK_LAUNCH_RC; continuing run for diagnostics"
@@ -331,4 +318,17 @@ fi
 
 echo "experiment_end=$(date -Iseconds)" >> "$OUT/experiment.log"
 run_log "[INFO] Run completed successfully"
+
+# Move output files into subdirectories so the run directory is easy to navigate manually.
+# config.json stays at the root as a quick-reference identity file.
+mkdir -p "$OUT/csv" "$OUT/plots" "$OUT/logs"
+for _f in "$OUT"/*.csv;  do [ -f "$_f" ] && mv "$_f" "$OUT/csv/"  || true; done
+for _f in "$OUT"/*.json; do
+  [ -f "$_f" ] || continue
+  [ "$(basename "$_f")" = "config.json" ] && continue
+  mv "$_f" "$OUT/csv/"
+done
+for _f in "$OUT"/*.log "$OUT"/*.err "$OUT"/*.pid; do [ -f "$_f" ] && mv "$_f" "$OUT/logs/" || true; done
+unset _f
+
 echo "done: $OUT"
