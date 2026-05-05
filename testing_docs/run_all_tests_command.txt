@@ -1,0 +1,20 @@
+Run from repo root on controller node:
+
+bash -o pipefail -c "bash experiment_scripts/run_all_tests.sh \
+  --controller http://128.110.223.12:8080 \
+  --user viliang \
+  --trusted-host 128.110.223.8 \
+  --attacker-host 128.110.223.13 \
+  --victim-host 128.110.223.15 \
+  --trusted-data-ip 10.10.10.1 \
+  --attacker-data-ip 10.10.10.2 \
+  --victim-data-ip 10.10.10.3 \
+  --project-dir /users/viliang/Self_Healing_SDN_Controller \
+  --controller-iface eth0 \
+  --attack-iface ovs-lan2 \
+  --clear-ovs on 2>&1 | tee run_all.log"
+
+Quick checks after run:
+- cat results/last_run_status.txt
+- cat results/last_run_status.json
+- tail -n 80 run_all.log
