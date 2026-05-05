@@ -1,5 +1,16 @@
 Run from repo root on controller node.
 
+Current default behavior in run_all_tests.sh (fast profile):
+- attack-delay defaults to 0
+- baseline-control calibration stage is skipped by default
+- threshold defaults to 50
+- to restore the old baseline calibration stage, add: --run-baseline-control
+
+Estimated wall-clock times:
+- Quick run below (duration=90, skip sweeps): ~8-12 minutes
+- Full default run (with saturation + sweeps): ~45-55 minutes
+- If --run-baseline-control is enabled: add ~3-4 minutes
+
 Quick iteration run (much faster, good for validation while debugging):
 - attack-delay 0: attack starts immediately (no warmup wait per run)
 - skip-baseline-control: skip the 180s threshold calibration run (uses fixed threshold=50)

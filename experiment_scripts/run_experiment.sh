@@ -81,6 +81,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3.8 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.8"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  else
+    echo "[ERROR] No Python interpreter found (python3.8/python3)" >&2
+    exit 2
+  fi
+fi
+
 # Derive practical defaults so routine CloudLab runs need fewer flags.
 if [ -z "$ATTACK_TARGET" ] && [ -n "$VICTIM" ]; then
   ATTACK_TARGET="$VICTIM"
@@ -171,7 +183,7 @@ append_event() {
   local now ts t
   now=$(date +%s.%N)
   ts="$now"
-  t=$(python3 - <<PY
+  t=$("$PYTHON_BIN" - <<PY
 start = float('$START_EPOCH')
 now = float('$now')
 print(round(now - start, 3))
@@ -229,7 +241,7 @@ else
 fi
 
 # Start collectors first, then legitimate warm-up traffic.
-python3 "$SCRIPT_DIR/collect_metrics.py" --duration "$DURATION" --out "$OUT" --controller "$CONTROLLER" --iface "$CONTROLLER_IFACE" ${THRESHOLD:+--threshold "$THRESHOLD"} $SWITCH_IPS_ARG > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
+"$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" --duration "$DURATION" --out "$OUT" --controller "$CONTROLLER" --iface "$CONTROLLER_IFACE" ${THRESHOLD:+--threshold "$THRESHOLD"} $SWITCH_IPS_ARG > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
 echo $! > "$OUT/collector.pid"
 run_log "[INFO] Started collector pid=$(cat "$OUT/collector.pid" 2>/dev/null || echo unknown)"
 for _ in 1 2 3 4 5; do
@@ -251,7 +263,7 @@ else
   ATTACK_DURATION=$((DURATION-ATTACK_DELAY))
 fi
 
-RUN_ATTACK=$(python3 - <<PY_CHECK
+RUN_ATTACK=$("$PYTHON_BIN" - <<PY_CHECK
 rate = float("$RATE")
 dur = float("$ATTACK_DURATION")
 print("yes" if rate > 0 and dur > 0 else "no")

@@ -46,21 +46,33 @@ CONTROLLER_URL="${CONTROLLER:-http://127.0.0.1:8080}"
 CONTROLLER_IFACE_VAL="${CONTROLLER_IFACE:-eth0}"
 PROJECT_DIR_VAL="${PROJECT_DIR:-$ROOT_DIR}"
 
-# Experiment defaults.
-RUN_BASELINE_CONTROL=on
+# Experiment defaults (fast profile).
+RUN_BASELINE_CONTROL=off
 RUN_SATURATION=on
 RUN_CORE=on
 RUN_SWEEPS=on
 CLEAR_OVS_MODE="off"
 
 DURATION=180
-ATTACK_DELAY=30
+ATTACK_DELAY=0
 ATTACK_LENGTH=90
 ATTACK_IFACE="ovs-lan2"
 SCAPY_RATE=1200
 HPING_RATE=10000
-THRESHOLD_OVERRIDE=""
+THRESHOLD_OVERRIDE="50"
 FAILED_RUNS=""
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3.8 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.8"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  else
+    echo "[ERROR] No Python interpreter found (python3.8/python3)" >&2
+    exit 2
+  fi
+fi
 
 log_stage() {
   CURRENT_STAGE="$*"
@@ -118,6 +130,7 @@ Options:
   --hping-rate PPS             Hping label rate (default: $HPING_RATE)
   --scapy-rate PPS             Scapy PPS (default: $SCAPY_RATE)
   --threshold N                Skip baseline threshold extraction and use N
+  --run-baseline-control       Run baseline collect_metrics stage (default is skipped for speed)
   --skip-baseline-control      Skip baseline collect_metrics stage
   --skip-saturation            Skip saturation finder stage
   --skip-core                  Skip core 3 comparison runs
@@ -146,6 +159,7 @@ while [ $# -gt 0 ]; do
     --hping-rate) HPING_RATE="$2"; shift 2 ;;
     --scapy-rate) SCAPY_RATE="$2"; shift 2 ;;
     --threshold) THRESHOLD_OVERRIDE="$2"; shift 2 ;;
+    --run-baseline-control) RUN_BASELINE_CONTROL=on; shift ;;
     --skip-baseline-control) RUN_BASELINE_CONTROL=off; shift ;;
     --skip-saturation) RUN_SATURATION=off; shift ;;
     --skip-core) RUN_CORE=off; shift ;;
@@ -244,14 +258,14 @@ if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
   $SSH_TRUSTED "nohup ping -i 0.5 -w 180 '$VICTIM_DATA_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
   $SSH_TRUSTED "nohup iperf -c '$VICTIM_DATA_IP' -t 180 >/tmp/iperf_control.log 2>&1 < /dev/null &"
 
-  python3 "$SCRIPT_DIR/collect_metrics.py" \
+  "$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" \
     --duration 180 \
     --out "$RESULTS_DIR/control_normal_traffic" \
     --controller "$CONTROLLER_URL" \
     --iface "$CONTROLLER_IFACE_VAL" \
     --baseline
 
-  THRESHOLD="$(python3 -c "import json; d=json.load(open('$RESULTS_DIR/control_normal_traffic/baseline_summary.json')); print(int((d['packet_in_rate']['max'] or 0) * 3))" 2>/dev/null)" || {
+  THRESHOLD="$("$PYTHON_BIN" -c "import json; d=json.load(open('$RESULTS_DIR/control_normal_traffic/baseline_summary.json')); print(int((d['packet_in_rate']['max'] or 0) * 3))" 2>/dev/null)" || {
     THRESHOLD=300
     log_stage "[WARN] Could not read baseline_summary.json; using fallback threshold=$THRESHOLD"
   }
@@ -270,7 +284,7 @@ fi
 
 if [ "$RUN_SATURATION" = "on" ]; then
   log_stage "[INFO] Running saturation finder"
-  python3 "$SCRIPT_DIR/saturation_finder.py" \
+  "$PYTHON_BIN" "$SCRIPT_DIR/saturation_finder.py" \
     --controller "$CONTROLLER_URL" \
     --out "$RESULTS_DIR/saturation_analysis" \
     --target "$VICTIM_DATA_IP" \
@@ -488,12 +502,12 @@ log_stage "[INFO] Generating per-run plots"
 for d in "$RESULTS_DIR"/*; do
   [ -d "$d" ] || continue
   [ -f "$d/config.json" ] || continue
-  python3 "$SCRIPT_DIR/plot_results.py" "$d" \
+  "$PYTHON_BIN" "$SCRIPT_DIR/plot_results.py" "$d" \
     || log_stage "[WARN] plot_results.py failed for $d; continuing (non-fatal)"
 done
 
 log_stage "[INFO] Generating cross-run summary"
-python3 "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
+"$PYTHON_BIN" "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
   || log_stage "[WARN] summarize_runs.py failed; continuing (non-fatal)"
 
 log_stage "[DONE] Full experiment suite complete"
