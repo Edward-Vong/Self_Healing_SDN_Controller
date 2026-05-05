@@ -298,9 +298,15 @@ else
   sleep_with_progress "$ATTACK_DURATION" "attack_window"
 fi
 
-# Stop local attack processes only.
-sudo pkill -f hping3 2>/dev/null || true
-sudo pkill -f '[p]acketin_attack.py' 2>/dev/null || true
+# Stop attack processes on the attacker host when running remotely.
+if [ -n "$CMD_PREFIX_ATTACK" ]; then
+  eval "$CMD_PREFIX_ATTACK 'sudo pkill -f hping3'" 2>/dev/null || true
+  eval "$CMD_PREFIX_ATTACK 'sudo pkill -f [p]acketin_attack.py'" 2>/dev/null || true
+else
+  # Local fallback for Mininet/dev runs. Use a narrow match to avoid killing this script.
+  sudo pkill -f 'hping3 --udp --flood' 2>/dev/null || true
+  sudo pkill -f '[p]acketin_attack.py' 2>/dev/null || true
+fi
 
 wait "$(cat "$OUT/collector.pid")" || true
 run_log "[INFO] Collector wait completed"
