@@ -50,13 +50,28 @@ def parse_args():
     p.add_argument("--interval", type=float, default=1.0, help="Polling interval in seconds")
     p.add_argument("--duration", type=float, default=90.0, help="Total watch duration in seconds")
     p.add_argument("--log", default="", help="Optional file path to mirror output")
+    p.add_argument("--mode", choices=["verbose", "flat"], default="verbose", help="Output style")
+    p.add_argument("--target-pps", type=float, default=0.0, help="Expected flat attack rate in pps")
+    p.add_argument("--rate-tolerance", type=float, default=0.95, help="Required fraction of target pps")
+    p.add_argument("--hold-duration", type=float, default=10.0, help="Seconds that measured rate must stay above required")
+    p.add_argument("--reach-timeout", type=float, default=30.0, help="Max seconds to reach and hold target")
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-    fh = open(args.log, "w", encoding="utf-8") if args.log else None
+def flatten_escalated_ports(escalated_payload):
+    out = set()
+    if not isinstance(escalated_payload, dict):
+        return out
 
+    for dpid, ports in escalated_payload.items():
+        if not isinstance(ports, list):
+            continue
+        for port in ports:
+            out.add((str(dpid), str(port)))
+    return out
+
+
+def run_verbose(args, fh):
     log("WATCH START controller={} interval={}s duration={}s".format(args.controller, args.interval, args.duration), fh)
 
     prev = {
@@ -172,6 +187,167 @@ def main():
         prev["known_hosts"] = cur_hosts
 
         time.sleep(max(0.2, args.interval))
+
+    log("WATCH END", fh)
+
+
+def run_flat(args, fh):
+    required_rate = max(0.0, args.target_pps * args.rate_tolerance)
+    hold_start = None
+    reached_in = None
+    start = time.time()
+    deadline = start + max(0.1, args.duration)
+    reach_deadline = start + max(0.1, args.reach_timeout)
+
+    samples = 0
+    pi_sum = 0.0
+    cpu_sum = 0.0
+    pi_peak = 0.0
+    cpu_peak = 0.0
+
+    prev_mitigation = None
+    prev_escalated = set()
+    success_reported = False
+    timed_out = False
+
+    log("Mode          : FLAT", fh)
+    log("Target PPS    : {} pps".format(int(args.target_pps) if args.target_pps >= 1 else args.target_pps), fh)
+    log("Rate tolerance: {:.0f}% of target".format(args.rate_tolerance * 100.0), fh)
+    log("Hold duration : {}s at or above required".format(int(args.hold_duration)), fh)
+    log("Reach timeout : {}s max to reach/hold target".format(int(args.reach_timeout)), fh)
+    log("", fh)
+    log("  Target PPS   Avg PI Rate   Avg CPU %", fh)
+    log("--------------------------------------", fh)
+    log("", fh)
+
+    while time.time() < deadline:
+        stats, stats_err = safe_fetch(args.controller, "/stats")
+        attack, attack_err = safe_fetch(args.controller, "/attack/status")
+        metrics, metrics_err = safe_fetch(args.controller, "/attack/metrics")
+
+        if stats_err or attack_err or metrics_err:
+            errs = []
+            if stats_err:
+                errs.append("/stats: {}".format(stats_err))
+            if attack_err:
+                errs.append("/attack/status: {}".format(attack_err))
+            if metrics_err:
+                errs.append("/attack/metrics: {}".format(metrics_err))
+            log("WARN API fetch issue -> {}".format(" | ".join(errs)), fh)
+            time.sleep(max(0.2, args.interval))
+            continue
+
+        pi_rate = float(attack.get("packet_in_rate", stats.get("packet_in_rate", 0.0)))
+        cpu = float(stats.get("controller_cpu_percent", 0.0))
+        mitigation_active = bool(attack.get("mitigation_active", False))
+
+        mitigation_obj = metrics.get("mitigation", {}) if isinstance(metrics, dict) else {}
+        escalated = flatten_escalated_ports(mitigation_obj.get("escalated_ports", {}))
+
+        samples += 1
+        pi_sum += pi_rate
+        cpu_sum += cpu
+        pi_peak = max(pi_peak, pi_rate)
+        cpu_peak = max(cpu_peak, cpu)
+
+        log(
+            "  target={} pps  measured pi_rate={:.2f}/s  cpu={:.2f}%".format(
+                int(args.target_pps) if args.target_pps >= 1 else args.target_pps,
+                pi_rate,
+                cpu,
+            ),
+            fh,
+        )
+
+        if prev_mitigation is None:
+            prev_mitigation = mitigation_active
+        elif mitigation_active != prev_mitigation:
+            state = "ACTIVE" if mitigation_active else "INACTIVE"
+            log("ALERT mitigation {}".format(state), fh)
+            prev_mitigation = mitigation_active
+
+        new_escalated = sorted(escalated - prev_escalated)
+        for dpid, port in new_escalated:
+            log("ALERT port fully closed: dpid={} port={}".format(dpid, port), fh)
+        prev_escalated = escalated
+
+        now = time.time()
+        if required_rate > 0.0 and pi_rate >= required_rate:
+            if hold_start is None:
+                hold_start = now
+                if reached_in is None:
+                    reached_in = hold_start - start
+            elif now - hold_start >= args.hold_duration and not success_reported:
+                avg_pi = (pi_sum / samples) if samples else 0.0
+                avg_cpu = (cpu_sum / samples) if samples else 0.0
+                log(
+                    "-> avg={:.2f}/s  peak={:.2f}/s  avg_cpu={:.2f}%  peak_cpu={:.2f}%  reached_in={:.2f}s  required>={:.2f}/s".format(
+                        avg_pi,
+                        pi_peak,
+                        avg_cpu,
+                        cpu_peak,
+                        reached_in if reached_in is not None else 0.0,
+                        required_rate,
+                    ),
+                    fh,
+                )
+                success_reported = True
+        else:
+            hold_start = None
+
+        if not success_reported and now >= reach_deadline:
+            avg_pi = (pi_sum / samples) if samples else 0.0
+            avg_cpu = (cpu_sum / samples) if samples else 0.0
+            log(
+                "-> avg={:.2f}/s  peak={:.2f}/s  avg_cpu={:.2f}%  peak_cpu={:.2f}%  FAILED to hold >= {:.2f}/s within {}s".format(
+                    avg_pi,
+                    pi_peak,
+                    avg_cpu,
+                    cpu_peak,
+                    required_rate,
+                    int(args.reach_timeout),
+                ),
+                fh,
+            )
+            timed_out = True
+            break
+
+        time.sleep(max(0.2, args.interval))
+
+    avg_pi = (pi_sum / samples) if samples else 0.0
+    avg_cpu = (cpu_sum / samples) if samples else 0.0
+
+    log("", fh)
+    log("==================================================================", fh)
+    log("  Target PPS   Avg PI Rate   Peak PI Rate   Avg CPU %   Peak CPU %", fh)
+    log("------------------------------------------------------------------", fh)
+    log(
+        "{:12.0f}{:14.2f}{:15.2f}{:12.2f}{:12.2f}".format(
+            args.target_pps,
+            avg_pi,
+            pi_peak,
+            avg_cpu,
+            cpu_peak,
+        ),
+        fh,
+    )
+    log("==================================================================", fh)
+    if timed_out:
+        log("RESULT: FAIL (target hold not reached in time)", fh)
+    elif success_reported:
+        log("RESULT: PASS (target hold reached)", fh)
+    else:
+        log("RESULT: INCOMPLETE (watch ended before PASS/FAIL condition)", fh)
+
+
+def main():
+    args = parse_args()
+    fh = open(args.log, "w", encoding="utf-8") if args.log else None
+
+    if args.mode == "flat":
+        run_flat(args, fh)
+    else:
+        run_verbose(args, fh)
 
     log("WATCH END", fh)
     if fh:

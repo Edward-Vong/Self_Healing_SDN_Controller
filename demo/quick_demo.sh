@@ -28,6 +28,9 @@ RATE="${DEMO_RATE:-4000}"
 SIZE="${DEMO_SIZE:-256}"
 THRESHOLD="${DEMO_THRESHOLD:-300}"
 ATTACK_METHOD="${DEMO_ATTACK_METHOD:-hping3}"
+RATE_TOLERANCE="${DEMO_RATE_TOLERANCE:-0.95}"
+HOLD_DURATION="${DEMO_HOLD_DURATION:-10}"
+REACH_TIMEOUT="${DEMO_REACH_TIMEOUT:-30}"
 
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
@@ -58,29 +61,19 @@ DRIVER_LOG="$OUT_DIR/quick_demo.driver.log"
 
 cleanup() {
   local rc=$?
-  if [ -n "${WATCH_PID:-}" ] && kill -0 "$WATCH_PID" >/dev/null 2>&1; then
-    kill "$WATCH_PID" >/dev/null 2>&1 || true
-    wait "$WATCH_PID" >/dev/null 2>&1 || true
+  if [ -n "${RUN_PID:-}" ] && kill -0 "$RUN_PID" >/dev/null 2>&1; then
+    kill "$RUN_PID" >/dev/null 2>&1 || true
+    wait "$RUN_PID" >/dev/null 2>&1 || true
   fi
   exit "$rc"
 }
 trap cleanup EXIT INT TERM
 
 echo "[INFO] Demo output dir: $OUT_DIR"
-echo "[INFO] Starting verbose controller watcher"
-"$PYTHON_BIN" "$SCRIPT_DIR/watch_controller_state.py" \
-  --controller "$CONTROLLER_URL" \
-  --duration "$((DURATION + 20))" \
-  --interval 1 \
-  --log "$WATCH_LOG" | tee "$OUT_DIR/watch_console.log" &
-WATCH_PID=$!
+echo "[INFO] Launching quick demo experiment in background"
+echo "[INFO] duration=$DURATION attack_length=$ATTACK_LENGTH rate=$RATE size=$SIZE threshold=$THRESHOLD method=$ATTACK_METHOD hold=${HOLD_DURATION}s timeout=${REACH_TIMEOUT}s tolerance=$RATE_TOLERANCE"
 
-sleep 1
-
-echo "[INFO] Running quick demo experiment"
-echo "[INFO] duration=$DURATION attack_length=$ATTACK_LENGTH rate=$RATE size=$SIZE threshold=$THRESHOLD method=$ATTACK_METHOD"
-
-RUN_EXPERIMENT_VERBOSE=1 bash "$EXP_DIR/run_experiment.sh" \
+RUN_EXPERIMENT_VERBOSE=0 bash "$EXP_DIR/run_experiment.sh" \
   --name "demo_quick" \
   --out-base "$OUT_BASE" \
   --duration "$DURATION" \
@@ -105,14 +98,32 @@ RUN_EXPERIMENT_VERBOSE=1 bash "$EXP_DIR/run_experiment.sh" \
   --attacker "$ATTACKER_HOST" \
   --victim "$VICTIM_HOST" \
   --project-dir "$PROJECT_DIR_VAL" \
-  2>&1 | tee "$DRIVER_LOG"
+  > "$DRIVER_LOG" 2>&1 &
+RUN_PID=$!
 
-sleep 2
+sleep 1
 
-if kill -0 "$WATCH_PID" >/dev/null 2>&1; then
-  kill "$WATCH_PID" >/dev/null 2>&1 || true
-  wait "$WATCH_PID" >/dev/null 2>&1 || true
+echo "[INFO] Monitoring flat-rate controller stats"
+"$PYTHON_BIN" "$SCRIPT_DIR/watch_controller_state.py" \
+  --mode flat \
+  --controller "$CONTROLLER_URL" \
+  --duration "$((DURATION + 20))" \
+  --interval 1 \
+  --target-pps "$RATE" \
+  --rate-tolerance "$RATE_TOLERANCE" \
+  --hold-duration "$HOLD_DURATION" \
+  --reach-timeout "$REACH_TIMEOUT" \
+  --log "$WATCH_LOG" | tee "$OUT_DIR/watch_console.log"
+
+RUN_RC=0
+wait "$RUN_PID" || RUN_RC=$?
+unset RUN_PID
+
+if [ "$RUN_RC" -ne 0 ]; then
+  echo "[WARN] Experiment exited non-zero (code=$RUN_RC). See $DRIVER_LOG"
 fi
+
+sleep 1
 
 echo "[DONE] Demo run complete"
 echo "[DONE] Watch log: $WATCH_LOG"
