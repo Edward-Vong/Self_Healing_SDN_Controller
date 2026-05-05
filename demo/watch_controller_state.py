@@ -204,6 +204,7 @@ def run_flat(args, fh):
 
     prev_mitigation = None
     prev_escalated = set()
+    prev_phase = None
     saw_threshold = False
     saw_mitigation_active = False
     saw_port_closed = False
@@ -286,7 +287,27 @@ def run_flat(args, fh):
 
         prev_escalated = escalated
 
-        if saw_mitigation_active and not escalated and not mitigation_active:
+        phase = controller_phase if controller_phase else "NORMAL"
+        if phase == "RECOVERY":
+            phase = "METERING"
+        if not controller_phase:
+            if recovery_mode:
+                phase = "METERING"
+            elif mitigation_active and escalated:
+                phase = "LOCKDOWN"
+            elif mitigation_active:
+                phase = "METERING"
+        log("  phase={}".format(phase), fh)
+
+        if phase == "LOCKDOWN" and not saw_port_closed:
+            saw_port_closed = True
+            log("ALERT port fully closed: controller entered lockdown phase", fh)
+
+        if saw_port_closed and prev_phase == "LOCKDOWN" and phase == "METERING" and not saw_back_to_meter:
+            saw_back_to_meter = True
+            log("ALERT lockdown lifted: back to meter mode", fh)
+
+        if saw_back_to_meter and phase == "NORMAL":
             if normal_start is None:
                 normal_start = time.time()
             elif time.time() - normal_start >= normal_hold_seconds:
@@ -294,15 +315,7 @@ def run_flat(args, fh):
         else:
             normal_start = None
 
-        phase = controller_phase if controller_phase else "NORMAL"
-        if not controller_phase:
-            if recovery_mode:
-                phase = "RECOVERY"
-            elif mitigation_active and escalated:
-                phase = "LOCKDOWN"
-            elif mitigation_active:
-                phase = "METERING"
-        log("  phase={}".format(phase), fh)
+        prev_phase = phase
 
         # Full end-to-end transition reached.
         if saw_threshold and saw_mitigation_active and saw_port_closed and saw_back_to_meter and saw_back_to_normal:

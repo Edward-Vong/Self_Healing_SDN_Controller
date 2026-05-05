@@ -81,6 +81,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.packet_in_threshold = PACKET_IN_THRESHOLD
         self.attack_detected = False
         self.last_detection_time = None
+        self.attack_cycle_start_time = None
         self.attack_clear_time = None  # When rate first dropped below threshold
         self.recovery_eligible_time = None  # Earliest time recovery may begin after quiet period
         self.mitigation_latch_until = 0.0  # Keep mitigation engaged briefly after detection/clear
@@ -122,6 +123,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.packet_in_events.clear()
         self.attack_detected = False
         self.last_detection_time = None
+        self.attack_cycle_start_time = None
         self.attack_clear_time = None
         self.recovery_eligible_time = None
         self.mitigation_latch_until = 0.0
@@ -156,8 +158,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
                 if self.attack_state.is_escalated(dpid, port)
             ]
         
+        phase = self.current_phase()
+
         return {
-            "phase": self.current_phase(),
+            "phase": phase,
+            "lockdown_active": phase == "LOCKDOWN",
             "mitigation_enabled": self.mitigation_enabled,
             "mitigation_active": self.mitigation_active(),
             "manual_mitigation": self.manual_mitigation,
@@ -179,9 +184,19 @@ class SelfHealingSDNController(app_manager.RyuApp):
             for dpid in self.datapaths.keys()
             for port in self.attack_state.get_rate_limited_ports(dpid)
         )
-        if self.mitigation_enabled and has_escalated_ports:
+        cycle_age = (
+            time.time() - self.attack_cycle_start_time
+            if self.attack_cycle_start_time is not None
+            else 0.0
+        )
+        if (
+            self.mitigation_enabled
+            and not self.recovery_manager.is_recovering()
+            and (has_escalated_ports or cycle_age >= ESCALATION_THRESHOLD_SECONDS)
+            and self.mitigation_active()
+        ):
             return "LOCKDOWN"
-        if self.mitigation_active():
+        if self.mitigation_active() or self.recovery_manager.is_recovering():
             return "METERING"
         return "NORMAL"
     
@@ -221,7 +236,9 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if current_rate >= self.packet_in_threshold:
             if not self.attack_detected:
                 self.last_detection_time = now
-                self.mitigation_start_time = now
+                if self.attack_cycle_start_time is None:
+                    self.attack_cycle_start_time = now
+                    self.mitigation_start_time = now
             self.attack_detected = True
             self.attack_clear_time = None  # Reset hold-down clock while still attacking
             self.recovery_eligible_time = None
@@ -259,6 +276,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if self.recovery_manager.is_recovering():
             recovery_complete = self.recovery_manager.recovery_tick(self.datapaths)
             if recovery_complete:
+                self.attack_cycle_start_time = None
                 self.mitigation_start_time = None
         
         # Check escalation during active mitigation
@@ -274,6 +292,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if not self.mitigation_enabled:
             self.manual_mitigation = False
             self.mitigation_start_time = None
+            self.attack_cycle_start_time = None
             self.attack_detected = False
             self.attack_clear_time = None
             self.recovery_eligible_time = None
@@ -633,6 +652,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         self.manual_mitigation = True
         self.attack_detected = True
+        self.attack_cycle_start_time = time.time()
         self.mitigation_start_time = time.time()
         return {
             "result": "success",
@@ -647,6 +667,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.manual_mitigation = False
         self.attack_detected = False
         self.mitigation_start_time = None
+        self.attack_cycle_start_time = None
         self.attack_clear_time = None
         self.recovery_eligible_time = None
         self.mitigation_latch_until = 0.0
