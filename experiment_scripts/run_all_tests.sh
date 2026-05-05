@@ -60,6 +60,7 @@ ATTACK_IFACE="ovs-lan2"
 SCAPY_RATE=1200
 HPING_RATE=10000
 THRESHOLD_OVERRIDE="50"
+THRESHOLD_SET_BY_USER=0
 FAILED_RUNS=""
 PYTHON_BIN="${PYTHON_BIN:-}"
 
@@ -130,7 +131,7 @@ Options:
   --hping-rate PPS             Hping label rate (default: $HPING_RATE)
   --scapy-rate PPS             Scapy PPS (default: $SCAPY_RATE)
   --threshold N                Skip baseline threshold extraction and use N
-  --run-baseline-control       Run baseline collect_metrics stage (default is skipped for speed)
+  --run-baseline-control       Run baseline collect_metrics stage (uses derived threshold unless --threshold is also provided)
   --skip-baseline-control      Skip baseline collect_metrics stage
   --skip-saturation            Skip saturation finder stage
   --skip-core                  Skip core 3 comparison runs
@@ -158,7 +159,7 @@ while [ $# -gt 0 ]; do
     --attack-length) ATTACK_LENGTH="$2"; shift 2 ;;
     --hping-rate) HPING_RATE="$2"; shift 2 ;;
     --scapy-rate) SCAPY_RATE="$2"; shift 2 ;;
-    --threshold) THRESHOLD_OVERRIDE="$2"; shift 2 ;;
+    --threshold) THRESHOLD_OVERRIDE="$2"; THRESHOLD_SET_BY_USER=1; shift 2 ;;
     --run-baseline-control) RUN_BASELINE_CONTROL=on; shift ;;
     --skip-baseline-control) RUN_BASELINE_CONTROL=off; shift ;;
     --skip-saturation) RUN_SATURATION=off; shift ;;
@@ -169,6 +170,12 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+# Fast profile defaults threshold to 50. If baseline-control is explicitly enabled and
+# user did not set --threshold, clear override so baseline can derive threshold.
+if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ "$THRESHOLD_SET_BY_USER" -eq 0 ]; then
+  THRESHOLD_OVERRIDE=""
+fi
 
 require_non_empty() {
   local name="$1"

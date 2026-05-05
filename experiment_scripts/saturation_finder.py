@@ -72,7 +72,7 @@ def run_rate_step(rate, duration, out_dir, cmd_prefix, attack_method, target, if
     try:
         with open(ping_log, 'r', errors='ignore') as f:
             for line in f:
-                m = re.search(r'time=([0-9.]+)\s*ms', line)
+                m = re.search(r'time[=<]([0-9.]+)\s*ms', line)
                 if m:
                     rtt_values.append(float(m.group(1)))
                 m = re.search(r'([0-9.]+)%\s+packet\s+loss', line)
