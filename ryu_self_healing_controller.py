@@ -19,6 +19,7 @@ from config import (
     LEARNING_PRIORITY,
     ATTACK_METER_RATE,
     ESCALATION_THRESHOLD_SECONDS,
+    HOLDDOWN_WINDOWS,
 )
 
 from rest_controller import RestController
@@ -77,6 +78,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.packet_in_threshold = PACKET_IN_THRESHOLD
         self.attack_detected = False
         self.last_detection_time = None
+        self.attack_clear_time = None  # When rate first dropped below threshold
 
         # Mitigation state
         self.mitigation_enabled = MITIGATION_ENABLED
@@ -106,6 +108,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.packet_in_events.clear()
         self.attack_detected = False
         self.last_detection_time = None
+        self.attack_clear_time = None
         self.manual_mitigation = False
 
         # reset source rate tracking
@@ -172,13 +175,22 @@ class SelfHealingSDNController(app_manager.RyuApp):
 
         current_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
         was_attacked = self.attack_detected
-        
+        holddown_seconds = HOLDDOWN_WINDOWS * WINDOW_SECONDS
+
         if current_rate > self.packet_in_threshold:
             if not self.attack_detected:
                 self.last_detection_time = time.time()
             self.attack_detected = True
+            self.attack_clear_time = None  # Reset hold-down clock while still attacking
         else:
-            self.attack_detected = False
+            if self.attack_detected:
+                # Rate just dropped; start or continue the hold-down timer
+                if self.attack_clear_time is None:
+                    self.attack_clear_time = time.time()
+                elif time.time() - self.attack_clear_time >= holddown_seconds:
+                    self.attack_detected = False
+                    self.attack_clear_time = None
+            # If already False, nothing to do
         
         # Handle recovery transitions
         if was_attacked and not self.attack_detected and not self.recovery_manager.is_recovering():
