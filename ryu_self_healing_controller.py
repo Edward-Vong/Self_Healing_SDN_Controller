@@ -22,6 +22,7 @@ from config import (
     HOLDDOWN_WINDOWS,
     MITIGATION_MIN_ACTIVE_WINDOWS,
     RECOVERY_QUIET_WINDOWS,
+    RECOVERY_WINDOW_SECONDS,
 )
 
 from rest_controller import RestController
@@ -104,12 +105,18 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # Initialize managers
         self.attack_state = AttackState(self.logger)
         self.mitigation_manager = MitigationManager(self.attack_state, self.logger, meter_rate=ATTACK_METER_RATE)
-        self.recovery_manager = RecoveryManager(self.attack_state, self.mitigation_manager, self.logger)
+        self.recovery_manager = RecoveryManager(
+            self.attack_state,
+            self.mitigation_manager,
+            self.logger,
+            recovery_window=RECOVERY_WINDOW_SECONDS,
+        )
 
         self.logger.info("self healing sdn api app started")
 
     def reset_counters(self):
         """Reset runtime counters and transient mitigation/trust state."""
+        self._clear_port_mitigation()
         self.start_time = time.time()
         self.packet_in_count = 0
         self.packet_in_events.clear()
@@ -128,6 +135,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
         # reset trust evaluation stats
         self.source_seen_counts.clear()
         self.trusted_sources.clear()
+        self.mitigated_sources.clear()
 
         # reset managers
         self.attack_state.clear_all()
@@ -149,6 +157,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             ]
         
         return {
+            "phase": self.current_phase(),
             "mitigation_enabled": self.mitigation_enabled,
             "mitigation_active": self.mitigation_active(),
             "manual_mitigation": self.manual_mitigation,
@@ -162,6 +171,19 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "trusted_sources": list(self.trusted_sources),
             "source_seen_counts": dict(self.source_seen_counts),
         }
+
+    def current_phase(self):
+        """Return the demo-facing self-healing phase."""
+        has_escalated_ports = any(
+            self.attack_state.is_escalated(dpid, port)
+            for dpid in self.datapaths.keys()
+            for port in self.attack_state.get_rate_limited_ports(dpid)
+        )
+        if self.mitigation_enabled and has_escalated_ports:
+            return "LOCKDOWN"
+        if self.mitigation_active():
+            return "METERING"
+        return "NORMAL"
     
     def _cleanup_old_packets_in_events(self, window_seconds=WINDOW_SECONDS):
         """Drop Packet-In timestamps older than the rolling window."""
@@ -194,12 +216,12 @@ class SelfHealingSDNController(app_manager.RyuApp):
             return
 
         current_rate = self._packet_in_rate(window_seconds=WINDOW_SECONDS)
-        was_attacked = self.attack_detected
         holddown_seconds = HOLDDOWN_WINDOWS * WINDOW_SECONDS
 
-        if current_rate > self.packet_in_threshold:
+        if current_rate >= self.packet_in_threshold:
             if not self.attack_detected:
                 self.last_detection_time = now
+                self.mitigation_start_time = now
             self.attack_detected = True
             self.attack_clear_time = None  # Reset hold-down clock while still attacking
             self.recovery_eligible_time = None
@@ -219,13 +241,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
                 elif now - self.attack_clear_time >= holddown_seconds:
                     self.attack_detected = False
                     self.attack_clear_time = None
-                    self.mitigation_latch_until = max(self.mitigation_latch_until, now + self.mitigation_min_active_seconds)
             # If already False, nothing to do
         
         # Handle recovery transitions
         if (
-            was_attacked
-            and not self.attack_detected
+            not self.attack_detected
             and not self.recovery_manager.is_recovering()
             and now >= self.mitigation_latch_until
             and self.recovery_eligible_time is not None
@@ -237,7 +257,9 @@ class SelfHealingSDNController(app_manager.RyuApp):
         
         # Tick recovery if enabled
         if self.recovery_manager.is_recovering():
-            self.recovery_manager.recovery_tick(self.datapaths)
+            recovery_complete = self.recovery_manager.recovery_tick(self.datapaths)
+            if recovery_complete:
+                self.mitigation_start_time = None
         
         # Check escalation during active mitigation
         if self.mitigation_active():
@@ -252,6 +274,12 @@ class SelfHealingSDNController(app_manager.RyuApp):
         if not self.mitigation_enabled:
             self.manual_mitigation = False
             self.mitigation_start_time = None
+            self.attack_detected = False
+            self.attack_clear_time = None
+            self.recovery_eligible_time = None
+            self.mitigation_latch_until = 0.0
+            self.recovery_manager.reset()
+            self._clear_port_mitigation()
 
         return {
             "result": "success",
@@ -305,6 +333,7 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "mitigation_active": self.mitigation_active(),
             "attack_detected": self.attack_detected,
             "packet_in_threshold": self.packet_in_threshold,
+            "phase": self.current_phase(),
             "manual_mitigation": self.manual_mitigation,
         }
         
@@ -618,6 +647,11 @@ class SelfHealingSDNController(app_manager.RyuApp):
         self.manual_mitigation = False
         self.attack_detected = False
         self.mitigation_start_time = None
+        self.attack_clear_time = None
+        self.recovery_eligible_time = None
+        self.mitigation_latch_until = 0.0
+        self.recovery_manager.reset()
+        self._clear_port_mitigation()
 
         return {
             "result": "success",
@@ -627,6 +661,12 @@ class SelfHealingSDNController(app_manager.RyuApp):
             "mitigation_start_time": self.mitigation_start_time,
             "trusted_sources": list(self.trusted_sources),
         }
+
+    def _clear_port_mitigation(self):
+        """Remove active per-port meters/drop rules from all connected switches."""
+        for dpid, datapath in list(self.datapaths.items()):
+            for port in list(self.attack_state.get_rate_limited_ports(dpid)):
+                self.mitigation_manager.remove_meter_on_port(datapath, port)
     
     def remove_source_flows(self, src):
         """Remove forwarding flows for a compromised trusted source on every switch."""

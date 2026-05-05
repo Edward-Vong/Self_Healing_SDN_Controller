@@ -32,6 +32,7 @@ RATE_TOLERANCE="${DEMO_RATE_TOLERANCE:-0.95}"
 HOLD_DURATION="${DEMO_HOLD_DURATION:-10}"
 REACH_TIMEOUT="${DEMO_REACH_TIMEOUT:-30}"
 TARGET_PPS="${DEMO_TARGET_PPS:-$THRESHOLD}"
+WATCH_EXTRA="${DEMO_WATCH_EXTRA:-90}"
 
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
@@ -72,7 +73,7 @@ trap cleanup EXIT INT TERM
 
 echo "[INFO] Demo output dir: $OUT_DIR"
 echo "[INFO] Launching quick demo experiment in background"
-echo "[INFO] duration=$DURATION attack_length=$ATTACK_LENGTH rate=$RATE size=$SIZE threshold=$THRESHOLD monitor_target=$TARGET_PPS method=$ATTACK_METHOD hold=${HOLD_DURATION}s timeout=${REACH_TIMEOUT}s tolerance=$RATE_TOLERANCE"
+echo "[INFO] duration=$DURATION attack_length=$ATTACK_LENGTH rate=$RATE size=$SIZE threshold=$THRESHOLD monitor_target=$TARGET_PPS method=$ATTACK_METHOD hold=${HOLD_DURATION}s timeout=${REACH_TIMEOUT}s tolerance=$RATE_TOLERANCE watch_extra=${WATCH_EXTRA}s"
 
 RUN_EXPERIMENT_VERBOSE=0 bash "$EXP_DIR/run_experiment.sh" \
   --name "demo_quick" \
@@ -108,7 +109,7 @@ echo "[INFO] Monitoring flat-rate controller stats"
 "$PYTHON_BIN" "$SCRIPT_DIR/watch_controller_state.py" \
   --mode flat \
   --controller "$CONTROLLER_URL" \
-  --duration "$((DURATION + 20))" \
+  --duration "$((DURATION + WATCH_EXTRA))" \
   --interval 1 \
   --target-pps "$TARGET_PPS" \
   --rate-tolerance "$RATE_TOLERANCE" \

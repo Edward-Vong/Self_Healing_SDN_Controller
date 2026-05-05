@@ -7,14 +7,14 @@ import time
 class RecoveryManager:
     """Manages 4-stage recovery process"""
     
-    RECOVERY_WINDOW = 60  # Total recovery time (seconds)
     STAGE_THRESHOLDS = [0.25, 0.50, 0.75, 1.0]  # Stage transition points
     STAGE0_REMOVE_INTERVAL = 3.0  # Minimum seconds between meter removals in stage 0
     
-    def __init__(self, attack_state, mitigation_manager, logger):
+    def __init__(self, attack_state, mitigation_manager, logger, recovery_window=60):
         self.attack_state = attack_state
         self.mitigation_manager = mitigation_manager
         self.logger = logger
+        self.recovery_window = recovery_window
         self.recovery_enabled = False
         self.recovery_start_time = None
         self.current_stage = -1
@@ -37,7 +37,7 @@ class RecoveryManager:
             return False
         
         elapsed = time.time() - self.recovery_start_time
-        progress = min(1.0, elapsed / self.RECOVERY_WINDOW)
+        progress = min(1.0, elapsed / self.recovery_window)
         
         # Determine current stage
         new_stage = -1
@@ -100,7 +100,7 @@ class RecoveryManager:
         if not self.recovery_enabled:
             return 0.0
         elapsed = time.time() - self.recovery_start_time
-        return min(1.0, elapsed / self.RECOVERY_WINDOW)
+        return min(1.0, elapsed / self.recovery_window)
     
     def reset(self):
         """Reset recovery state"""

@@ -108,10 +108,12 @@ class RestController(ControllerBase):
             - Packet-In threshold
             - last attack detection time
         """
+        self.app._update_attack_status()
         data = {
             "mitigation_enabled": self.app.mitigation_enabled,
             "mitigation_active": self.app.mitigation_active(),
             "attack_detected": self.app.attack_detected,
+            "phase": self.app.current_phase(),
             "manual_mitigation": self.app.manual_mitigation,
             "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
             "threshold_rate": self.app.packet_in_threshold,
@@ -130,10 +132,12 @@ class RestController(ControllerBase):
             - suspicious flows
             - recent Packet-In history
         """
+        self.app._update_attack_status()
         data = {
             "mitigation_enabled": self.app.mitigation_enabled,
             "mitigation_active": self.app.mitigation_active(),
             "attack_detected": self.app.attack_detected,
+            "phase": self.app.current_phase(),
             "packet_in_rate": round(self.app._packet_in_rate(WINDOW_SECONDS), 2),
             "packet_in_threshold": self.app.packet_in_threshold,
             "mitigation": self.app.get_mitigation_summary()

@@ -216,7 +216,7 @@ def run_flat(args, fh):
     log("Mode          : FLAT", fh)
     log("Target PPS    : {} pps".format(int(args.target_pps) if args.target_pps >= 1 else args.target_pps), fh)
     log("Rate tolerance: {:.0f}% of target".format(args.rate_tolerance * 100.0), fh)
-    log("Goal          : threshold -> mitigation -> port close -> recovery", fh)
+    log("Goal          : normal -> metering -> lockdown -> metering -> normal", fh)
     log("", fh)
     log("  Target PPS   Avg PI Rate   Avg CPU %", fh)
     log("--------------------------------------", fh)
@@ -243,6 +243,7 @@ def run_flat(args, fh):
         mitigation_obj = metrics.get("mitigation", {}) if isinstance(metrics, dict) else {}
         escalated = flatten_escalated_ports(mitigation_obj.get("escalated_ports", {}))
         recovery_mode = bool(mitigation_obj.get("recovery_mode", False))
+        controller_phase = metrics.get("phase") or mitigation_obj.get("phase")
 
         samples += 1
         pi_sum += pi_rate
@@ -293,17 +294,18 @@ def run_flat(args, fh):
         else:
             normal_start = None
 
-        phase = "NORMAL"
-        if recovery_mode:
-            phase = "RECOVERY"
-        elif mitigation_active and escalated:
-            phase = "LOCKDOWN"
-        elif mitigation_active:
-            phase = "METERING"
+        phase = controller_phase if controller_phase else "NORMAL"
+        if not controller_phase:
+            if recovery_mode:
+                phase = "RECOVERY"
+            elif mitigation_active and escalated:
+                phase = "LOCKDOWN"
+            elif mitigation_active:
+                phase = "METERING"
         log("  phase={}".format(phase), fh)
 
         # Full end-to-end transition reached.
-        if saw_threshold and saw_mitigation_active and saw_port_closed and (saw_back_to_meter or saw_back_to_normal):
+        if saw_threshold and saw_mitigation_active and saw_port_closed and saw_back_to_meter and saw_back_to_normal:
             break
 
         time.sleep(max(0.2, args.interval))
@@ -326,8 +328,8 @@ def run_flat(args, fh):
         fh,
     )
     log("==================================================================", fh)
-    if saw_threshold and saw_mitigation_active and saw_port_closed and (saw_back_to_meter or saw_back_to_normal):
-        log("RESULT: PASS (observed threshold -> mitigation -> lockdown -> recovery transition)", fh)
+    if saw_threshold and saw_mitigation_active and saw_port_closed and saw_back_to_meter and saw_back_to_normal:
+        log("RESULT: PASS (observed normal -> metering -> lockdown -> metering -> normal transition)", fh)
     else:
         missing = []
         if not saw_threshold:
@@ -336,8 +338,10 @@ def run_flat(args, fh):
             missing.append("mitigation active")
         if not saw_port_closed:
             missing.append("port fully closed")
-        if not (saw_back_to_meter or saw_back_to_normal):
-            missing.append("recovery (meter/normal)")
+        if not saw_back_to_meter:
+            missing.append("metering after lockdown")
+        if not saw_back_to_normal:
+            missing.append("normal after recovery")
         log("RESULT: PARTIAL (missing: {})".format(", ".join(missing)), fh)
 
 
