@@ -292,13 +292,14 @@ run_main_experiment() {
   local method="$4"
   local size="$5"
   local attempt_rc=0
+  local attempt_name="$name"
 
   log_stage "[INFO] Starting run: $name (duration ${DURATION}s + setup/recovery)."
   clear_remote_ovs_flows
 
   set +e
   RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
-    --name "$name" \
+    --name "$attempt_name" \
     --rate "$rate" \
     --size "$size" \
     --duration "$DURATION" \
@@ -329,10 +330,11 @@ run_main_experiment() {
 
   if [ "$attempt_rc" -ne 0 ] && { [ "$attempt_rc" -eq 143 ] || [ "$attempt_rc" -eq 137 ]; }; then
     log_stage "[WARN] Run $name failed with signal-style exit $attempt_rc; retrying once with iperf off"
+    attempt_name="${name}_retry"
     clear_remote_ovs_flows
     set +e
     RUN_EXPERIMENT_VERBOSE=1 bash "$SCRIPT_DIR/run_experiment.sh" \
-      --name "${name}_retry" \
+      --name "$attempt_name" \
       --rate "$rate" \
       --size "$size" \
       --duration "$DURATION" \
@@ -363,15 +365,19 @@ run_main_experiment() {
   fi
 
   if [ "$attempt_rc" -ne 0 ]; then
-    log_stage "[WARN] Run $name failed with exit code $attempt_rc; continuing to next run"
-    show_run_debug_tail "$name"
+    log_stage "[WARN] Run $name failed with exit code $attempt_rc (last attempt: $attempt_name); continuing to next run"
+    show_run_debug_tail "$attempt_name"
     if [ -z "$FAILED_RUNS" ]; then
-      FAILED_RUNS="$name:$attempt_rc"
+      FAILED_RUNS="$attempt_name:$attempt_rc"
     else
-      FAILED_RUNS="$FAILED_RUNS,$name:$attempt_rc"
+      FAILED_RUNS="$FAILED_RUNS,$attempt_name:$attempt_rc"
     fi
   else
-    log_stage "[INFO] Completed run: $name"
+    if [ "$attempt_name" = "$name" ]; then
+      log_stage "[INFO] Completed run: $name"
+    else
+      log_stage "[INFO] Completed run: $name (via retry: $attempt_name)"
+    fi
   fi
 }
 
