@@ -19,10 +19,12 @@ else
   pkill -f '[p]acketin_attack.py' 2>/dev/null || true
   pkill -f "ping -i" 2>/dev/null || true
   pkill -f "iperf -c" 2>/dev/null || true
-  pkill -f hping3 2>/dev/null || true
+  # Avoid broad "hping3" match, which can hit parent orchestrator command lines.
+  pkill -f "hping3 --udp --flood" 2>/dev/null || true
 fi
 
-pkill -f hping3 2>/dev/null || true
+# Best-effort local cleanup for stray flood attackers without matching orchestrator args.
+pkill -f "hping3 --udp --flood" 2>/dev/null || true
 pkill -f '[p]acketin_attack.py' 2>/dev/null || true
 
 echo "cleanup_done"
