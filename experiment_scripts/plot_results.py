@@ -48,90 +48,126 @@ def save_line(rows, x, ys, labels, title, ylabel, out):
     if not rows: return False
     plt.figure()
     xs=[num(r,x) for r in rows]
-    for y,l in zip(ys,labels): plt.plot(xs,[num(r,y) for r in rows],label=l)
-    plt.xlabel('time (s)' if x=='t' else x); plt.ylabel(ylabel); plt.title(title); plt.grid(True); plt.legend(); plt.tight_layout(); plt.savefig(out); plt.close(); return True
+    all_vals=[]
+    for y,l in zip(ys,labels):
+        yvals=[num(r,y) for r in rows]
+        plt.plot(xs, yvals, label=l)
+        all_vals.extend(yvals)
+    plt.xlabel('time (s)' if x=='t' else x); plt.ylabel(ylabel); plt.title(title)
+    _smart_ylim(all_vals)
+    plt.grid(True); plt.legend(); plt.tight_layout(); plt.savefig(out); plt.close(); return True
+
+
+def _percentile99(values):
+    """99th-percentile of a list of floats, ignoring None/zero."""
+    vals = sorted(v for v in values if v is not None and v > 0)
+    if not vals:
+        return None
+    return vals[min(int(len(vals) * 0.99), len(vals) - 1)]
+
+
+def _smart_ylim(values, margin=0.15):
+    """Clip the y-axis upper bound to the 99th percentile plus headroom.
+    Prevents a single initial spike from compressing the rest of the chart."""
+    cap = _percentile99(values)
+    if cap is not None and cap > 0:
+        plt.ylim(bottom=0, top=cap * (1 + margin))
+
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument('input_dir'); p.add_argument('--output', default='')
+    p=argparse.ArgumentParser()
+    p.add_argument('input_dir')
+    p.add_argument('--output', default='')
+    p.add_argument('--trim-start', type=float, default=5.0,
+                   help='Exclude the first N seconds from all time-series plots '
+                        'to remove the topology-learning burst at t=0 (default: 5)')
     a=p.parse_args(); d=a.input_dir
     out=a.output or os.path.join(d,'plots')
     os.makedirs(out, exist_ok=True)
+    trim = a.trim_start
 
     metrics=read_csv(_csv(d,'controller_metrics.csv'))
     status=read_csv(_csv(d,'attack_status.csv'))
     mit=read_csv(_csv(d,'mitigation_metrics.csv'))
     link=read_csv(_csv(d,'controller_link_util.csv'))
     events=read_csv(_csv(d,'events.csv'))
-    
+
+    def trim_rows(rows):
+        """Drop rows before trim_start so the initial spike is excluded from plots."""
+        return [r for r in rows if num(r, 't') >= trim]
+
+    status_plot  = trim_rows(status)
+    metrics_plot = trim_rows(metrics)
+    mit_plot     = trim_rows(mit)
+    link_plot    = trim_rows(link)
+
     made=[]
     
-    if status:
+    if status_plot:
         plt.figure(figsize=(14, 6))
-        xs=[num(r,'t') for r in status]
-        ys=[num(r,'packet_in_rate') for r in status]
+        xs=[num(r,'t') for r in status_plot]
+        ys=[num(r,'packet_in_rate') for r in status_plot]
         plt.plot(xs,ys,label='Packet-In rate')
-        thr=[num(r,'threshold_rate') for r in status if r.get('threshold_rate') not in ('',None)]
+        thr=[num(r,'threshold_rate') for r in status_plot if r.get('threshold_rate') not in ('',None)]
         if thr: plt.axhline(thr[0], linestyle='--', label='Threshold')
-        
-        # Define colors for each event
+
         event_colors = {
             'threshold_crossed': 'red',
             'attack_detected': 'orange',
             'mitigation_active': 'green',
             'attack_ended': 'blue'
         }
-        
         for e in events:
             if e.get('event') in ('attack_detected','threshold_crossed','mitigation_active','attack_ended'):
                 color = event_colors.get(e.get('event'), 'gray')
                 plt.axvline(num(e,'t'), linestyle=':', color=color, label=e.get('event'))
-        
-        # Detect when mitigation_active changes from true to false
+
         mitigation_inactive_time = None
-        for i in range(len(status)-1):
-            curr_active = boolish(status[i].get('mitigation_active', False))
-            next_active = boolish(status[i+1].get('mitigation_active', False))
+        for i in range(len(status_plot)-1):
+            curr_active = boolish(status_plot[i].get('mitigation_active', False))
+            next_active = boolish(status_plot[i+1].get('mitigation_active', False))
             if curr_active and not next_active:
-                mitigation_inactive_time = num(status[i+1], 't')
+                mitigation_inactive_time = num(status_plot[i+1], 't')
                 break
         if mitigation_inactive_time:
             plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
-        
-        plt.xlabel('time (s)'); plt.ylabel('Packet-In events/sec'); plt.title('Attack detection: Packet-In rate over time'); plt.grid(True); plt.legend(); plt.tight_layout(); path=os.path.join(out,'packetin_rate_detection.png'); plt.savefig(path); plt.close(); made.append(path)
+
+        _smart_ylim(ys)
+        plt.xlabel('time (s)'); plt.ylabel('Packet-In events/sec')
+        plt.title('Attack detection: Packet-In rate over time')
+        plt.grid(True); plt.legend(); plt.tight_layout()
+        path=os.path.join(out,'packetin_rate_detection.png'); plt.savefig(path); plt.close(); made.append(path)
     
-    if metrics:
+    if metrics_plot:
         plt.figure(figsize=(14, 6))
-        xs = [num(r, 't') for r in metrics]
-        ys = [num(r, 'controller_cpu_percent') for r in metrics]
+        xs = [num(r, 't') for r in metrics_plot]
+        ys = [num(r, 'controller_cpu_percent') for r in metrics_plot]
 
         plt.plot(xs, ys, label='CPU %')
 
         ev_times = event_times(events, ['threshold_crossed', 'attack_detected', 'mitigation_active', 'attack_ended'])
-        
-        # Define colors for each event
         event_colors = {
             'threshold_crossed': 'red',
             'attack_detected': 'orange',
             'mitigation_active': 'green',
             'attack_ended': 'blue'
         }
-        
         for label, t in ev_times.items():
             color = event_colors.get(label, 'gray')
             plt.axvline(t, linestyle=':', color=color, label=label)
-        
-        # Detect when mitigation_active changes from true to false
+
         mitigation_inactive_time = None
-        if status:
-            for i in range(len(status)-1):
-                curr_active = boolish(status[i].get('mitigation_active', False))
-                next_active = boolish(status[i+1].get('mitigation_active', False))
+        if status_plot:
+            for i in range(len(status_plot)-1):
+                curr_active = boolish(status_plot[i].get('mitigation_active', False))
+                next_active = boolish(status_plot[i+1].get('mitigation_active', False))
                 if curr_active and not next_active:
-                    mitigation_inactive_time = num(status[i+1], 't')
+                    mitigation_inactive_time = num(status_plot[i+1], 't')
                     break
         if mitigation_inactive_time:
             plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
 
+        _smart_ylim(ys)
         plt.xlabel('time (s)')
         plt.ylabel('CPU %')
         plt.title('Controller CPU over time')
@@ -144,30 +180,30 @@ def main():
         plt.close()
         made.append(path)
     
-    if mit:
+    if mit_plot:
         plt.figure(figsize=(14, 6))
-        xs = [num(r, 't') for r in mit]
-        
-        # Calculate rates (drops per second) for each metric
+        xs = [num(r, 't') for r in mit_plot]
+
         mitigated_rates = [0]
         unknown_rates = [0]
         overrate_rates = [0]
-        
-        for i in range(1, len(mit)):
+
+        for i in range(1, len(mit_plot)):
             dt = xs[i] - xs[i-1]
             if dt > 0:
-                mitigated_rates.append((num(mit[i], 'mitigated_drop_count') - num(mit[i-1], 'mitigated_drop_count')) / dt)
-                unknown_rates.append((num(mit[i], 'dropped_unknown_count') - num(mit[i-1], 'dropped_unknown_count')) / dt)
-                overrate_rates.append((num(mit[i], 'dropped_overrate_count') - num(mit[i-1], 'dropped_overrate_count')) / dt)
+                mitigated_rates.append((num(mit_plot[i], 'mitigated_drop_count') - num(mit_plot[i-1], 'mitigated_drop_count')) / dt)
+                unknown_rates.append((num(mit_plot[i], 'dropped_unknown_count') - num(mit_plot[i-1], 'dropped_unknown_count')) / dt)
+                overrate_rates.append((num(mit_plot[i], 'dropped_overrate_count') - num(mit_plot[i-1], 'dropped_overrate_count')) / dt)
             else:
                 mitigated_rates.append(0)
                 unknown_rates.append(0)
                 overrate_rates.append(0)
-        
+
         plt.plot(xs, mitigated_rates, label='total drops/sec')
         plt.plot(xs, unknown_rates, label='unknown source drops/sec')
         plt.plot(xs, overrate_rates, label='over-rate drops/sec')
-        
+
+        _smart_ylim(mitigated_rates + unknown_rates + overrate_rates)
         plt.xlabel('time (s)')
         plt.ylabel('drops/sec')
         plt.title('Mitigation drops rate over time')
@@ -220,7 +256,7 @@ def main():
         made.append(path)
     
     lutil_png=os.path.join(out,'controller_link_util_over_time.png')
-    if link and save_line(link,'t',['total_mbps','rx_mbps','tx_mbps'],['total Mbps','rx Mbps','tx Mbps'],'Controller link utilization over time','Mbps',lutil_png): made.append(lutil_png)
+    if link_plot and save_line(link_plot,'t',['total_mbps','rx_mbps','tx_mbps'],['total Mbps','rx Mbps','tx Mbps'],'Controller link utilization over time','Mbps',lutil_png): made.append(lutil_png)
     # parse ping RTT logs — one combined plot covering both existing and new legitimate traffic flows
     import json, re
 
@@ -262,8 +298,10 @@ def main():
                 w.writeheader()
                 w.writerows(rows)
 
+            # Trim the warm-up window from the plot (CSV keeps full data).
+            rows_plot = [r for r in rows if r['t'] >= trim]
             label = 'existing trusted flow' if name == 'ping_existing' else 'new trusted flow'
-            plt.plot([r['t'] for r in rows], [r['rtt_ms'] for r in rows], label=label)
+            plt.plot([r['t'] for r in rows_plot], [r['rtt_ms'] for r in rows_plot], label=label)
 
     if has_ping:
         plt.axvline(attack_delay, linestyle='--', label='attack starts')
@@ -273,16 +311,19 @@ def main():
             plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
 
         mitigation_inactive_time = None
-        if status:
-            for i in range(len(status)-1):
-                curr_active = boolish(status[i].get('mitigation_active', False))
-                next_active = boolish(status[i+1].get('mitigation_active', False))
+        if status_plot:
+            for i in range(len(status_plot)-1):
+                curr_active = boolish(status_plot[i].get('mitigation_active', False))
+                next_active = boolish(status_plot[i+1].get('mitigation_active', False))
                 if curr_active and not next_active:
-                    mitigation_inactive_time = num(status[i+1], 't')
+                    mitigation_inactive_time = num(status_plot[i+1], 't')
                     break
         if mitigation_inactive_time is not None:
             plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
 
+        ax = plt.gca()
+        rtt_flat = [v for line in ax.get_lines() for v in line.get_ydata()]
+        _smart_ylim(rtt_flat)
         plt.xlabel('time (s)')
         plt.ylabel('RTT ms')
         plt.title('Legitimate Traffic RTT During Attack and Recovery')
@@ -351,13 +392,17 @@ def main():
             w = csv.DictWriter(f, fieldnames=['t', 'mbps'])
             w.writeheader()
             w.writerows(rows)
-        plt.plot([r['t'] for r in rows], [r['mbps'] for r in rows], label=label)
+        rows_plot = [r for r in rows if r['t'] >= trim]
+        plt.plot([r['t'] for r in rows_plot], [r['mbps'] for r in rows_plot], label=label)
 
     if has_iperf:
         plt.axvline(attack_delay, linestyle='--', label='attack starts')
         ev_times = event_times(events, ['mitigation_active'])
         if 'mitigation_active' in ev_times:
             plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
+        ax = plt.gca()
+        iperf_flat = [v for line in ax.get_lines() for v in line.get_ydata()]
+        _smart_ylim(iperf_flat)
         plt.xlabel('time (s)')
         plt.ylabel('Mbits/sec')
         plt.title('Trusted Throughput During Attack and Recovery')
@@ -372,11 +417,11 @@ def main():
         plt.close()
         made.append(path)
     
-    if mit:
+    if mit_plot:
         plt.figure(figsize=(14, 6))
-        xs=[num(r,'t') for r in mit]
-        rate_limited=[num(r,'rate_limited_ports_count') for r in mit]
-        escalated=[num(r,'escalated_ports_count') for r in mit]
+        xs=[num(r,'t') for r in mit_plot]
+        rate_limited=[num(r,'rate_limited_ports_count') for r in mit_plot]
+        escalated=[num(r,'escalated_ports_count') for r in mit_plot]
         
         plt.plot(xs, rate_limited, label='rate-limited ports', marker='o')
         plt.plot(xs, escalated, label='escalated (drop) ports', marker='s')

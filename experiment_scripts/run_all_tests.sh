@@ -24,9 +24,13 @@ ATTACKER_HOST="${ATTACKER:-}"
 VICTIM_HOST="${VICTIM:-}"
 
 # Data-plane IPs used as traffic targets.
-TRUSTED_DATA_IP="${TRUSTED_DATA_IP:-10.10.10.1}"
-ATTACKER_DATA_IP="${ATTACKER_DATA_IP:-10.10.10.2}"
-VICTIM_DATA_IP="${VICTIM_DATA_IP:-10.10.10.3}"
+# VICTIM_DATA_IP   = victim's IP reachable from the attacker (attack target, 10.10.3.x).
+# VALID_TARGET_IP  = victim's IP reachable from the trusted node (ping/iperf target, 10.10.2.x).
+# These differ because the CloudLab topology uses point-to-point /24 subnets per pair.
+TRUSTED_DATA_IP="${TRUSTED_DATA_IP:-10.10.2.1}"
+ATTACKER_DATA_IP="${ATTACKER_DATA_IP:-10.10.3.1}"
+VICTIM_DATA_IP="${VICTIM_DATA_IP:-10.10.3.2}"
+VALID_TARGET_IP="${VALID_TARGET_IP:-10.10.2.2}"
 
 CONTROLLER_URL="${CONTROLLER:-http://127.0.0.1:8080}"
 CONTROLLER_IFACE_VAL="${CONTROLLER_IFACE:-eth0}"
@@ -39,15 +43,18 @@ RUN_CORE=on
 RUN_SWEEPS=on
 CLEAR_OVS_MODE="off"
 
-DURATION=90
+DURATION=75
 ATTACK_DELAY=0
-ATTACK_LENGTH=45
+ATTACK_LENGTH=60
 ATTACK_IFACE="ovs-lan2"
 SCAPY_RATE=1200
 HPING_RATE=10000
 THRESHOLD_OVERRIDE=""
 THRESHOLD_SET_BY_USER=0
 FAILED_RUNS=""
+TRIM_START=5        # seconds of topology-learning warmup to exclude from plots
+REPLOT_ONLY=0       # set to 1 via --replot to regenerate plots without re-running experiments
+DRY_RUN=0           # set to 1 via --dry-run to validate config/connectivity only
 PYTHON_BIN="${PYTHON_BIN:-}"
 
 if [ -z "$PYTHON_BIN" ]; then
@@ -102,7 +109,8 @@ Options:
   --victim-host HOST           Victim node SSH host/IP
   --trusted-data-ip IP         Trusted dataplane IP (default: $TRUSTED_DATA_IP)
   --attacker-data-ip IP        Attacker dataplane IP (default: $ATTACKER_DATA_IP)
-  --victim-data-ip IP          Victim dataplane IP (default: $VICTIM_DATA_IP)
+  --victim-data-ip IP          Victim attack-target IP  (attacker→victim subnet, default: $VICTIM_DATA_IP)
+  --valid-target-ip IP         Victim valid-traffic IP  (trusted→victim subnet, default: $VALID_TARGET_IP)
   --project-dir DIR            Repo path on remote nodes (default from switches.conf or local)
   --controller-iface IFACE     Controller interface for utilization metrics
   --attack-iface IFACE         Attacker egress iface for scapy (default: $ATTACK_IFACE)
@@ -118,6 +126,9 @@ Options:
   --skip-core                  Skip core 3 comparison runs
   --skip-sweeps                Skip rate and size sweeps
   --clear-ovs MODE             on|off|auto for run_experiment.sh (default: $CLEAR_OVS_MODE)
+  --trim-start SEC             Seconds of warm-up data to exclude from plots (default: $TRIM_START)
+  --replot                     Regenerate plots from existing results without re-running experiments
+  --dry-run                    Validate config and SSH connectivity only; do not run any experiments
   -h, --help                   Show this help
 EOF
 }
@@ -132,6 +143,7 @@ while [ $# -gt 0 ]; do
     --trusted-data-ip) TRUSTED_DATA_IP="$2"; shift 2 ;;
     --attacker-data-ip) ATTACKER_DATA_IP="$2"; shift 2 ;;
     --victim-data-ip) VICTIM_DATA_IP="$2"; shift 2 ;;
+    --valid-target-ip) VALID_TARGET_IP="$2"; shift 2 ;;
     --project-dir) PROJECT_DIR_VAL="$2"; shift 2 ;;
     --controller-iface) CONTROLLER_IFACE_VAL="$2"; shift 2 ;;
     --attack-iface) ATTACK_IFACE="$2"; shift 2 ;;
@@ -147,6 +159,9 @@ while [ $# -gt 0 ]; do
     --skip-core) RUN_CORE=off; shift ;;
     --skip-sweeps) RUN_SWEEPS=off; shift ;;
     --clear-ovs) CLEAR_OVS_MODE="$2"; shift 2 ;;
+    --trim-start) TRIM_START="$2"; shift 2 ;;
+    --replot) REPLOT_ONLY=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
   esac
@@ -168,8 +183,9 @@ require_non_empty() {
 }
 
 is_probable_dataplane_ip() {
+  # Flag anything in a 10.x.x.x /8 — management IPs are 128.110.x.x on this topology.
   case "$1" in
-    10.10.10.*) return 0 ;;
+    10.*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -179,6 +195,7 @@ require_non_empty "TRUSTED host" "$TRUSTED_HOST"
 require_non_empty "ATTACKER host" "$ATTACKER_HOST"
 require_non_empty "VICTIM host" "$VICTIM_HOST"
 require_non_empty "VICTIM data IP" "$VICTIM_DATA_IP"
+require_non_empty "VALID traffic target IP" "$VALID_TARGET_IP"
 
 if is_probable_dataplane_ip "$TRUSTED_HOST" || is_probable_dataplane_ip "$ATTACKER_HOST" || is_probable_dataplane_ip "$VICTIM_HOST"; then
   echo "[ERROR] SSH hosts look like dataplane IPs (10.10.10.x). Use management eth0 hostnames/IPs for TRUSTED/ATTACKER/VICTIM." >&2
@@ -226,7 +243,100 @@ clear_remote_ovs_flows() {
   done
 }
 
-log_stage "[INFO] Verifying SSH connectivity"
+# --replot: regenerate all plots and summary from existing results, then exit.
+# No SSH, no experiments — just re-runs plot_results.py and summarize_runs.py.
+if [ "$REPLOT_ONLY" -eq 1 ]; then
+  log_stage "[INFO] --replot mode: regenerating plots from existing results in $RESULTS_DIR"
+  found=0
+  for d in "$RESULTS_DIR"/*; do
+    [ -d "$d" ] || continue
+    [ -f "$d/config.json" ] || continue
+    found=$((found+1))
+    "$PYTHON_BIN" "$SCRIPT_DIR/plot_results.py" "$d" --trim-start "$TRIM_START" \
+      || log_stage "[WARN] plot_results.py failed for $d"
+  done
+  "$PYTHON_BIN" "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
+    || log_stage "[WARN] summarize_runs.py failed"
+  log_stage "[DONE] Replotted $found run(s) with trim-start=${TRIM_START}s"
+  write_status "success" "0" "replot completed ($found runs)"
+  exit 0
+fi
+
+# --dry-run: validate everything (config, SSH, controller API, scapy) then exit.
+# No experiments are launched.
+if [ "$DRY_RUN" -eq 1 ]; then
+  log_stage "[DRY-RUN] === Preflight check ===  (no experiments will run)"
+  log_stage "[DRY-RUN] Config:"
+  echo "  USER=$USER_NAME"
+  echo "  CONTROLLER=$CONTROLLER_URL  IFACE=$CONTROLLER_IFACE_VAL"
+  echo "  TRUSTED=$TRUSTED_HOST   TRUSTED_DATA_IP=$TRUSTED_DATA_IP"
+  echo "  ATTACKER=$ATTACKER_HOST  ATTACKER_DATA_IP=$ATTACKER_DATA_IP"
+  echo "  VICTIM=$VICTIM_HOST     VICTIM_DATA_IP=$VICTIM_DATA_IP  VALID_TARGET_IP=$VALID_TARGET_IP"
+  echo "  ATTACK_IFACE=$ATTACK_IFACE  SIZE=256  ATTACK_LENGTH=${ATTACK_LENGTH}s  DURATION=${DURATION}s"
+  echo "  SCAPY_RATE=$SCAPY_RATE  HPING_RATE=$HPING_RATE  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
+  echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE  RUN_SWEEPS=$RUN_SWEEPS"
+
+  failed=0
+
+  log_stage "[DRY-RUN] Checking SSH connectivity..."
+  for _node in trusted:$TRUSTED_HOST attacker:$ATTACKER_HOST victim:$VICTIM_HOST; do
+    _role=${_node%%:*}; _host=${_node##*:}
+    if ssh $SSH_OPTS "$USER_NAME@$_host" 'hostname' >/dev/null 2>&1; then
+      echo "  [OK]  $_role ($USER_NAME@$_host)"
+    else
+      echo "  [FAIL] $_role ($USER_NAME@$_host) — SSH failed" >&2
+      failed=$((failed+1))
+    fi
+  done
+
+  log_stage "[DRY-RUN] Checking controller REST API..."
+  if curl -fsS "$CONTROLLER_URL/stats" >/dev/null 2>&1; then
+    echo "  [OK]  $CONTROLLER_URL/stats"
+  else
+    echo "  [FAIL] Cannot reach $CONTROLLER_URL/stats" >&2
+    failed=$((failed+1))
+  fi
+
+  log_stage "[DRY-RUN] Checking Python on attacker ($ATTACKER_HOST)..."
+  py_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'python3 --version 2>&1') && \
+    echo "  [OK]  python3: $py_ver" || { echo "  [FAIL] python3 not found on attacker" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Checking scapy on attacker ($ATTACKER_HOST)..."
+  scapy_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'python3 -c "import scapy; print(scapy.__version__)"' 2>&1) && \
+    echo "  [OK]  scapy $scapy_ver" || { echo "  [FAIL] scapy not available on attacker (run: sudo apt-get install -y python3-scapy)" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Checking hping3 on attacker ($ATTACKER_HOST)..."
+  ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'which hping3 >/dev/null 2>&1' && \
+    echo "  [OK]  hping3" || { echo "  [FAIL] hping3 not found on attacker (run: sudo apt-get install -y hping3)" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Checking Python on controller..."
+  "$PYTHON_BIN" --version >/dev/null 2>&1 && \
+    echo "  [OK]  $PYTHON_BIN" || { echo "  [FAIL] $PYTHON_BIN not found on controller" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Verifying packetin_attack.py is present (SCP check)..."
+  scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:/tmp/_packetin_preflight_test.py" >/dev/null 2>&1 && \
+    echo "  [OK]  SCP to attacker works" || { echo "  [FAIL] SCP to $ATTACKER_HOST failed" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Checking reachability: trusted -> victim (VALID_TARGET_IP=$VALID_TARGET_IP)..."
+  rtt=$(ssh $SSH_OPTS "$USER_NAME@$TRUSTED_HOST" "ping -c 3 -W 2 $VALID_TARGET_IP 2>&1 | tail -1") && \
+    echo "  [OK]  ping $VALID_TARGET_IP: $rtt" || { echo "  [FAIL] trusted cannot reach victim at $VALID_TARGET_IP" >&2; failed=$((failed+1)); }
+
+  log_stage "[DRY-RUN] Checking reachability: attacker -> victim (VICTIM_DATA_IP=$VICTIM_DATA_IP)..."
+  rtt=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "ping -c 3 -W 2 $VICTIM_DATA_IP 2>&1 | tail -1") && \
+    echo "  [OK]  ping $VICTIM_DATA_IP: $rtt" || { echo "  [FAIL] attacker cannot reach victim at $VICTIM_DATA_IP" >&2; failed=$((failed+1)); }
+
+  echo ""
+  if [ "$failed" -eq 0 ]; then
+    log_stage "[DRY-RUN] All checks PASSED. Ready to run experiments."
+    write_status "success" "0" "dry-run preflight all checks passed"
+    exit 0
+  else
+    log_stage "[DRY-RUN] $failed check(s) FAILED. Fix the issues above before running experiments."
+    write_status "failed" "1" "dry-run preflight $failed check(s) failed"
+    exit 1
+  fi
+fi
+
 $SSH_TRUSTED "hostname"
 $SSH_ATTACKER "hostname"
 $SSH_VICTIM "hostname"
@@ -243,8 +353,8 @@ THRESHOLD="${THRESHOLD_OVERRIDE}"
 if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
   log_stage "[INFO] Running baseline control collection (about 90s)"
   $SSH_VICTIM "nohup iperf -s >/tmp/iperf_server_control.log 2>&1 < /dev/null &" || true
-  $SSH_TRUSTED "nohup ping -i 0.5 -w 90 '$VICTIM_DATA_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
-  $SSH_TRUSTED "nohup iperf -c '$VICTIM_DATA_IP' -t 90 >/tmp/iperf_control.log 2>&1 < /dev/null &"
+  $SSH_TRUSTED "nohup ping -i 0.5 -w 90 '$VALID_TARGET_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
+  $SSH_TRUSTED "nohup iperf -c '$VALID_TARGET_IP' -t 90 >/tmp/iperf_control.log 2>&1 < /dev/null &"
 
   "$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" \
     --duration 90 \
@@ -303,7 +413,7 @@ _call_run_experiment() {
     --attack-method "$method" \
     --attack-iface "$ATTACK_IFACE" \
     --attack-target "$VICTIM_DATA_IP" \
-    --valid-target "$VICTIM_DATA_IP" \
+    --valid-target "$VALID_TARGET_IP" \
     --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
     --controller "$CONTROLLER_URL" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
@@ -381,7 +491,7 @@ run_baseline_no_attack_once() {
   log_stage "[INFO] baseline_no_attack attempt=$attempt iperf=$iperf_mode"
   clear_remote_ovs_flows
   set +e
-  _call_run_experiment "baseline_no_attack" 0 64 on hping3 0 "$iperf_mode"
+  _call_run_experiment "baseline_no_attack" 0 256 on hping3 0 "$iperf_mode"
   local rc=${PIPESTATUS[0]}
   set -e
   return "$rc"
@@ -413,21 +523,16 @@ log_stage "[INFO] Completed threshold tuning baseline"
 
 if [ "$RUN_CORE" = "on" ]; then
   log_stage "[INFO] Running core comparison suite"
-  run_main_experiment "hping_attack_mit_off" "$HPING_RATE" off hping3 64
-  run_main_experiment "hping_attack_mit_on"  "$HPING_RATE" on  hping3 64
-  run_main_experiment "scapy_attack_mit_off" "$SCAPY_RATE" off scapy  64
-  run_main_experiment "scapy_attack_mit_on"  "$SCAPY_RATE" on  scapy  64
+  run_main_experiment "hping_attack_mit_off" "$HPING_RATE" off hping3 256
+  run_main_experiment "hping_attack_mit_on"  "$HPING_RATE" on  hping3 256
+  run_main_experiment "scapy_attack_mit_off" "$SCAPY_RATE" off scapy  256
+  run_main_experiment "scapy_attack_mit_on"  "$SCAPY_RATE" on  scapy  256
 fi
 
 if [ "$RUN_SWEEPS" = "on" ]; then
   log_stage "[INFO] Running scapy rate sweep"
   for r in 600 900 1200 1500 3000 5000 10000; do
-    run_main_experiment "rate_${r}_scapy_mit_on" "$r" on scapy 64
-  done
-
-  log_stage "[INFO] Running scapy packet size sweep"
-  for s in 64 256 512; do
-    run_main_experiment "size_${s}_scapy_mit_on" "$SCAPY_RATE" on scapy "$s"
+    run_main_experiment "rate_${r}_scapy_mit_on" "$r" on scapy 256
   done
 fi
 
@@ -435,7 +540,7 @@ log_stage "[INFO] Generating per-run plots"
 for d in "$RESULTS_DIR"/*; do
   [ -d "$d" ] || continue
   [ -f "$d/config.json" ] || continue
-  "$PYTHON_BIN" "$SCRIPT_DIR/plot_results.py" "$d" \
+  "$PYTHON_BIN" "$SCRIPT_DIR/plot_results.py" "$d" --trim-start "$TRIM_START" \
     || log_stage "[WARN] plot_results.py failed for $d; continuing (non-fatal)"
 done
 
