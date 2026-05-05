@@ -7,9 +7,9 @@ Current default behavior in run_all_tests.sh (fast profile):
 - to restore the old baseline calibration stage, add: --run-baseline-control
 
 Estimated wall-clock times:
-- Quick run below (duration=90, skip sweeps): ~8-12 minutes
-- Full default run (with saturation + sweeps): ~45-55 minutes
-- If --run-baseline-control is enabled: add ~3-4 minutes
+- Quick run below (duration=90, skip sweeps): ~5-7 minutes
+- Full default run (with saturation + sweeps): ~25-30 minutes
+- If --run-baseline-control is enabled: add ~2 minutes
 
 Quick iteration run (much faster, good for validation while debugging):
 - attack-delay 0: attack starts immediately (no warmup wait per run)
@@ -18,12 +18,7 @@ Quick iteration run (much faster, good for validation while debugging):
 - skip-sweeps: run only the 3 core comparison runs + baseline_no_attack
 
 bash experiment_scripts/run_all_tests.sh \
-  --duration 90 \
-  --attack-delay 0 \
-  --attack-length 45 \
   --skip-sweeps \
-  --skip-baseline-control \
-  --threshold 50 \
   2>&1 | tee run_all_quick.log
 
 Full run (long, complete comparison and sweeps):

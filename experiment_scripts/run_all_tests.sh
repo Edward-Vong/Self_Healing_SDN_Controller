@@ -53,9 +53,9 @@ RUN_CORE=on
 RUN_SWEEPS=on
 CLEAR_OVS_MODE="off"
 
-DURATION=180
+DURATION=90
 ATTACK_DELAY=0
-ATTACK_LENGTH=90
+ATTACK_LENGTH=45
 ATTACK_IFACE="ovs-lan2"
 SCAPY_RATE=1200
 HPING_RATE=10000
@@ -260,13 +260,13 @@ scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJE
 THRESHOLD="${THRESHOLD_OVERRIDE}"
 
 if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
-  log_stage "[INFO] Running baseline control collection (about 180s)"
+  log_stage "[INFO] Running baseline control collection (about 90s)"
   $SSH_VICTIM "nohup iperf -s >/tmp/iperf_server_control.log 2>&1 < /dev/null &" || true
-  $SSH_TRUSTED "nohup ping -i 0.5 -w 180 '$VICTIM_DATA_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
-  $SSH_TRUSTED "nohup iperf -c '$VICTIM_DATA_IP' -t 180 >/tmp/iperf_control.log 2>&1 < /dev/null &"
+  $SSH_TRUSTED "nohup ping -i 0.5 -w 90 '$VICTIM_DATA_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
+  $SSH_TRUSTED "nohup iperf -c '$VICTIM_DATA_IP' -t 90 >/tmp/iperf_control.log 2>&1 < /dev/null &"
 
   "$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" \
-    --duration 180 \
+    --duration 90 \
     --out "$RESULTS_DIR/control_normal_traffic" \
     --controller "$CONTROLLER_URL" \
     --iface "$CONTROLLER_IFACE_VAL" \
@@ -299,7 +299,7 @@ if [ "$RUN_SATURATION" = "on" ]; then
     --attack-method scapy \
     --cmd-prefix "$SSH_ATTACKER" \
     --rtt-cmd-prefix "$SSH_TRUSTED" \
-    --step-duration 30 \
+    --step-duration 15 \
     --rtt-threshold-ms 50 \
     --loss-threshold-percent 5 \
     --rates 1000,5000,10000,20000,50000 \
