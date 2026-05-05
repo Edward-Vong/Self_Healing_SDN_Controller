@@ -309,6 +309,7 @@ run_main_experiment() {
     --attack-iface "$ATTACK_IFACE" \
     --attack-target "$VICTIM_DATA_IP" \
     --valid-target "$VICTIM_DATA_IP" \
+    --switch-ips "$TRUSTED_DATA_IP,$VICTIM_DATA_IP" \
     --controller "$CONTROLLER_URL" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
     --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
@@ -342,6 +343,7 @@ run_main_experiment() {
       --attack-iface "$ATTACK_IFACE" \
       --attack-target "$VICTIM_DATA_IP" \
       --valid-target "$VICTIM_DATA_IP" \
+      --switch-ips "$TRUSTED_DATA_IP,$VICTIM_DATA_IP" \
       --controller "$CONTROLLER_URL" \
       --controller-iface "$CONTROLLER_IFACE_VAL" \
       --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
@@ -413,6 +415,7 @@ run_baseline_no_attack_once() {
     --attack-method hping3 \
     --attack-target "$VICTIM_DATA_IP" \
     --valid-target "$VICTIM_DATA_IP" \
+    --switch-ips "$TRUSTED_DATA_IP,$VICTIM_DATA_IP" \
     --controller "$CONTROLLER_URL" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
     --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \

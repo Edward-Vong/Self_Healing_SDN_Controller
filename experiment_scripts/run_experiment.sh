@@ -27,6 +27,7 @@ IPERF_SERVER_PREFIX=""
 THRESHOLD=""
 REMOTE_SCRIPT_DIR=""
 CLEAR_OVS=auto
+SWITCH_IPS=""
 
 # Optional topology defaults loaded from switches.conf.
 USER=""
@@ -41,6 +42,8 @@ if [ -f "$SWITCHES_CONF" ]; then
   . "$SWITCHES_CONF"
 fi
 OVS_SWITCHES="${OVS_SWITCHES:-s1 s2 s3 s4}"
+# Use SWITCH_MONITOR_IPS from switches.conf as the default for --switch-ips.
+SWITCH_IPS="${SWITCH_IPS:-${SWITCH_MONITOR_IPS:-}}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -73,6 +76,7 @@ while [ $# -gt 0 ]; do
     --victim) VICTIM="$2"; shift 2;;
     --project-dir) PROJECT_DIR="$2"; shift 2;;
     --clear-ovs) CLEAR_OVS="$2"; shift 2;;
+    --switch-ips) SWITCH_IPS="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -211,8 +215,21 @@ if [ "$IPERF" = "on" ] && [ -n "$IPERF_SERVER_PREFIX" ]; then
   sleep 1
 fi
 
+# Default switch IPs to valid+attack targets if not explicitly set.
+if [ -z "$SWITCH_IPS" ]; then
+  SWITCH_IPS_ARG=""
+  _ips=""
+  [ -n "$VALID_TARGET" ] && _ips="$VALID_TARGET"
+  if [ -n "$ATTACK_TARGET" ] && [ "$ATTACK_TARGET" != "$VALID_TARGET" ]; then
+    _ips="${_ips:+$_ips,}$ATTACK_TARGET"
+  fi
+  [ -n "$_ips" ] && SWITCH_IPS_ARG="--switch-ips $_ips"
+else
+  SWITCH_IPS_ARG="--switch-ips $SWITCH_IPS"
+fi
+
 # Start collectors first, then legitimate warm-up traffic.
-python3 "$SCRIPT_DIR/collect_metrics.py" --duration "$DURATION" --out "$OUT" --controller "$CONTROLLER" --iface "$CONTROLLER_IFACE" ${THRESHOLD:+--threshold "$THRESHOLD"} > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
+python3 "$SCRIPT_DIR/collect_metrics.py" --duration "$DURATION" --out "$OUT" --controller "$CONTROLLER" --iface "$CONTROLLER_IFACE" ${THRESHOLD:+--threshold "$THRESHOLD"} $SWITCH_IPS_ARG > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
 echo $! > "$OUT/collector.pid"
 run_log "[INFO] Started collector pid=$(cat "$OUT/collector.pid" 2>/dev/null || echo unknown)"
 for _ in 1 2 3 4 5; do
