@@ -1,0 +1,23 @@
+[2026-05-16 03:29:19] [run_experiment:baseline_no_attack] [INFO] Starting run with PID=26443 duration=75 attack_delay=0
+[2026-05-16 03:29:19] [run_experiment:baseline_no_attack] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 03:29:19] [run_experiment:baseline_no_attack] [INFO] Metrics collection phase starting
+[2026-05-16 03:29:19] [run_experiment:baseline_no_attack] [INFO] Started remote iperf server helper pid=26461
+[2026-05-16 03:29:20] [run_experiment:baseline_no_attack] [INFO] Started collector pid=26467
+[2026-05-16 03:29:21] [run_experiment:baseline_no_attack] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 03:29:21] [run_experiment:baseline_no_attack] [INFO] Attack delay phase completed
+[2026-05-16 03:29:21] [run_experiment:baseline_no_attack] [INFO] No attack launched; sleeping attack window ATTACK_DURATION=0
+[2026-05-16 03:30:36] [run_experiment:baseline_no_attack] [INFO] Collector wait completed
+[2026-05-16 03:30:37] [run_experiment:baseline_no_attack] [INFO] Run completed successfully
+done: results/baseline_no_attack_20260516_032919
+[2026-05-16 06:38:58] [run_experiment:baseline_no_attack] [INFO] Starting run with PID=30423 duration=75 attack_delay=15
+[2026-05-16 06:38:58] [run_experiment:baseline_no_attack] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 06:38:58] [run_experiment:baseline_no_attack] [INFO] Metrics collection phase starting
+[2026-05-16 06:38:58] [run_experiment:baseline_no_attack] [INFO] Started remote iperf server helper pid=30441
+[2026-05-16 06:38:59] [run_experiment:baseline_no_attack] [INFO] Started collector pid=30447
+[2026-05-16 06:39:00] [run_experiment:baseline_no_attack] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 06:39:15] [run_experiment:baseline_no_attack] [INFO] attack_delay progress 15/15s
+[2026-05-16 06:39:15] [run_experiment:baseline_no_attack] [INFO] Attack delay phase completed
+[2026-05-16 06:39:15] [run_experiment:baseline_no_attack] [INFO] No attack launched; sleeping attack window ATTACK_DURATION=0
+[2026-05-16 06:40:15] [run_experiment:baseline_no_attack] [INFO] Collector wait completed
+[2026-05-16 06:40:16] [run_experiment:baseline_no_attack] [INFO] Run completed successfully
+done: results/baseline_no_attack_20260516_063858

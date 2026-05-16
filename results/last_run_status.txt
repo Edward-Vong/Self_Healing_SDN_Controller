@@ -1,0 +1,4 @@
+status=success
+exit_code=0
+stage=[DONE] Results directory: /users/viliang/Self_Healing_SDN_Controller/results
+message=run_all_tests completed successfully

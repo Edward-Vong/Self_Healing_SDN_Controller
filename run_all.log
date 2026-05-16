@@ -1,0 +1,369 @@
+[WARN] SSH client does not support StrictHostKeyChecking=accept-new; falling back to StrictHostKeyChecking=no
+[2026-05-04 04:06:51] [INFO] Verifying SSH connectivity
+node-0.viliang-303892.sdndockerlab-pg0.utah.cloudlab.us
+node-1.viliang-303892.sdndockerlab-pg0.utah.cloudlab.us
+node-2.viliang-303892.sdndockerlab-pg0.utah.cloudlab.us
+[2026-05-04 04:06:52] [INFO] Verifying controller API at http://128.110.223.12:8080
+[2026-05-04 04:06:52] [INFO] Ensuring packetin_attack.py exists on attacker
+[2026-05-04 04:06:53] [INFO] Running baseline control collection (about 180s)
+
+=== Baseline Summary ===
+  Packet-In rate  - mean: 0.0268  min: 0.0  max: 0.3  stddev: 0.0855
+  CPU %           - mean: 1.104  min: 0.22  max: 1.67  stddev: 0.1578
+  False-positive mitigation triggers: 0 / 112 samples
+  Suggested threshold (max x3): 0.9
+  Saved: /users/viliang/Self_Healing_SDN_Controller/results/control_normal_traffic/baseline_summary.json
+
+[2026-05-04 04:09:54] [INFO] Derived threshold=0
+[2026-05-04 04:09:54] [WARN] Derived threshold (0) is dangerously low; raising to minimum 50
+[2026-05-04 04:09:54] [INFO] Running saturation finder
+
+Saturation Finder
+================
+Target: 10.10.10.3
+Attack method: scapy
+Rates to test: [1000, 5000, 10000, 20000, 50000] pps
+Step duration: 30s
+RTT saturation threshold: 50.0ms
+Packet loss saturation threshold: 5.0%
+
+Testing 1000 pps...
+  Starting attack at 1000 pps for 30s...
+  Running ping for RTT measurement...
+  Avg RTT: Nonems  Packet loss: 100.0%
+  *** SATURATION DETECTED: Packet loss exceeded 5.0% ***
+
+=== Saturation Report ===
+Saturation detected at: 1000 pps
+Safe maximum rate: 1000 pps
+Report saved: /users/viliang/Self_Healing_SDN_Controller/results/saturation_analysis/saturation_report.json
+
+[2026-05-04 04:10:35] [INFO] Running threshold tuning baseline (quiet period expected: about 180s)
+[2026-05-04 04:10:36] [INFO] baseline_no_attack attempt=1 iperf=on
+[2026-05-04 04:10:36] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:10:39] [run_experiment:baseline_no_attack] [INFO] Starting run with PID=16128 duration=180 attack_delay=30
+[2026-05-04 04:10:39] [run_experiment:baseline_no_attack] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:10:39] [run_experiment:baseline_no_attack] [INFO] Metrics collection phase starting
+[2026-05-04 04:10:39] [run_experiment:baseline_no_attack] [INFO] Started remote iperf server helper pid=16144
+[2026-05-04 04:10:40] [run_experiment:baseline_no_attack] [INFO] Started collector pid=16150
+[2026-05-04 04:10:40] [run_experiment:baseline_no_attack] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:10:55] [run_experiment:baseline_no_attack] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:11:10] [run_experiment:baseline_no_attack] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:11:10] [run_experiment:baseline_no_attack] [INFO] Attack delay phase completed
+[2026-05-04 04:11:10] [run_experiment:baseline_no_attack] [INFO] No attack launched; sleeping attack window ATTACK_DURATION=0
+[2026-05-04 04:13:41] [run_experiment:baseline_no_attack] [INFO] Collector wait completed
+[2026-05-04 04:13:41] [run_experiment:baseline_no_attack] [INFO] Run completed successfully
+done: results/baseline_no_attack_20260504_041039
+[2026-05-04 04:13:41] [INFO] Completed threshold tuning baseline
+[2026-05-04 04:13:41] [INFO] Running core comparison suite
+[2026-05-04 04:13:41] [INFO] Starting run: hping_attack_mit_off (duration 180s + setup/recovery).
+[2026-05-04 04:13:41] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:13:44] [run_experiment:hping_attack_mit_off] [INFO] Starting run with PID=16195 duration=180 attack_delay=30
+[2026-05-04 04:13:44] [run_experiment:hping_attack_mit_off] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:13:44] [run_experiment:hping_attack_mit_off] [INFO] Metrics collection phase starting
+[2026-05-04 04:13:44] [run_experiment:hping_attack_mit_off] [INFO] Started remote iperf server helper pid=16211
+[2026-05-04 04:13:45] [run_experiment:hping_attack_mit_off] [INFO] Started collector pid=16217
+[2026-05-04 04:13:46] [run_experiment:hping_attack_mit_off] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:14:01] [run_experiment:hping_attack_mit_off] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:14:16] [run_experiment:hping_attack_mit_off] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:14:16] [run_experiment:hping_attack_mit_off] [INFO] Attack delay phase completed
+[2026-05-04 04:14:16] [run_experiment:hping_attack_mit_off] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:14:31] [run_experiment:hping_attack_mit_off] [INFO] attack_window progress 15/90s
+[2026-05-04 04:14:46] [run_experiment:hping_attack_mit_off] [INFO] attack_window progress 30/90s
+[2026-05-04 04:15:01] [run_experiment:hping_attack_mit_off] [INFO] attack_window progress 45/90s
+[2026-05-04 04:15:16] [run_experiment:hping_attack_mit_off] [INFO] attack_window progress 60/90s
+[2026-05-04 04:15:31] [run_experiment:hping_attack_mit_off] [INFO] attack_window progress 75/90s
+[2026-05-04 04:15:46] [run_experiment:hping_attack_mit_off] [INFO] attack_window progress 90/90s
+[2026-05-04 04:16:46] [run_experiment:hping_attack_mit_off] [INFO] Collector wait completed
+[2026-05-04 04:16:46] [run_experiment:hping_attack_mit_off] [INFO] Run completed successfully
+done: results/hping_attack_mit_off_20260504_041344
+[2026-05-04 04:16:46] [INFO] Completed run: hping_attack_mit_off
+[2026-05-04 04:16:46] [INFO] Starting run: hping_attack_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:16:46] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:16:50] [run_experiment:hping_attack_mit_on] [INFO] Starting run with PID=16279 duration=180 attack_delay=30
+[2026-05-04 04:16:50] [run_experiment:hping_attack_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:16:50] [run_experiment:hping_attack_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:16:50] [run_experiment:hping_attack_mit_on] [INFO] Started remote iperf server helper pid=16295
+[2026-05-04 04:16:51] [run_experiment:hping_attack_mit_on] [INFO] Started collector pid=16301
+[2026-05-04 04:16:51] [run_experiment:hping_attack_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:17:06] [run_experiment:hping_attack_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:17:21] [run_experiment:hping_attack_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:17:21] [run_experiment:hping_attack_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:17:21] [run_experiment:hping_attack_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:17:36] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:17:51] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:18:06] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:18:21] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:18:36] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:18:51] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:19:51] [run_experiment:hping_attack_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:19:52] [run_experiment:hping_attack_mit_on] [INFO] Run completed successfully
+done: results/hping_attack_mit_on_20260504_041650
+[2026-05-04 04:19:52] [INFO] Completed run: hping_attack_mit_on
+[2026-05-04 04:19:52] [INFO] Starting run: scapy_attack_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:19:52] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:19:55] [run_experiment:scapy_attack_mit_on] [INFO] Starting run with PID=16366 duration=180 attack_delay=30
+[2026-05-04 04:19:55] [run_experiment:scapy_attack_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:19:55] [run_experiment:scapy_attack_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:19:55] [run_experiment:scapy_attack_mit_on] [INFO] Started remote iperf server helper pid=16382
+[2026-05-04 04:19:56] [run_experiment:scapy_attack_mit_on] [INFO] Started collector pid=16388
+[2026-05-04 04:19:57] [run_experiment:scapy_attack_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:20:12] [run_experiment:scapy_attack_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:20:27] [run_experiment:scapy_attack_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:20:27] [run_experiment:scapy_attack_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:20:27] [run_experiment:scapy_attack_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:20:42] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:20:57] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:21:12] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:21:27] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:21:42] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:21:57] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:22:57] [run_experiment:scapy_attack_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:22:57] [run_experiment:scapy_attack_mit_on] [INFO] Run completed successfully
+done: results/scapy_attack_mit_on_20260504_041955
+[2026-05-04 04:22:57] [INFO] Completed run: scapy_attack_mit_on
+[2026-05-04 04:22:57] [INFO] Running scapy rate sweep
+[2026-05-04 04:22:57] [INFO] Starting run: rate_600_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:22:57] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:23:00] [run_experiment:rate_600_scapy_mit_on] [INFO] Starting run with PID=16462 duration=180 attack_delay=30
+[2026-05-04 04:23:00] [run_experiment:rate_600_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:23:01] [run_experiment:rate_600_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:23:01] [run_experiment:rate_600_scapy_mit_on] [INFO] Started remote iperf server helper pid=16478
+[2026-05-04 04:23:02] [run_experiment:rate_600_scapy_mit_on] [INFO] Started collector pid=16484
+[2026-05-04 04:23:02] [run_experiment:rate_600_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:23:17] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:23:32] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:23:32] [run_experiment:rate_600_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:23:32] [run_experiment:rate_600_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:23:47] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:24:02] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:24:17] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:24:32] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:24:47] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:25:02] [run_experiment:rate_600_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:26:02] [run_experiment:rate_600_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:26:03] [run_experiment:rate_600_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_600_scapy_mit_on_20260504_042300
+[2026-05-04 04:26:03] [INFO] Completed run: rate_600_scapy_mit_on
+[2026-05-04 04:26:03] [INFO] Starting run: rate_900_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:26:03] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:26:06] [run_experiment:rate_900_scapy_mit_on] [INFO] Starting run with PID=16551 duration=180 attack_delay=30
+[2026-05-04 04:26:06] [run_experiment:rate_900_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:26:06] [run_experiment:rate_900_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:26:06] [run_experiment:rate_900_scapy_mit_on] [INFO] Started remote iperf server helper pid=16567
+[2026-05-04 04:26:07] [run_experiment:rate_900_scapy_mit_on] [INFO] Started collector pid=16573
+[2026-05-04 04:26:07] [run_experiment:rate_900_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:26:22] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:26:37] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:26:37] [run_experiment:rate_900_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:26:38] [run_experiment:rate_900_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:26:53] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:27:08] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:27:23] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:27:38] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:27:53] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:28:08] [run_experiment:rate_900_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:29:08] [run_experiment:rate_900_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:29:08] [run_experiment:rate_900_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_900_scapy_mit_on_20260504_042606
+[2026-05-04 04:29:08] [INFO] Completed run: rate_900_scapy_mit_on
+[2026-05-04 04:29:08] [INFO] Starting run: rate_1200_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:29:08] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:29:11] [run_experiment:rate_1200_scapy_mit_on] [INFO] Starting run with PID=16643 duration=180 attack_delay=30
+[2026-05-04 04:29:11] [run_experiment:rate_1200_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:29:11] [run_experiment:rate_1200_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:29:11] [run_experiment:rate_1200_scapy_mit_on] [INFO] Started remote iperf server helper pid=16659
+[2026-05-04 04:29:12] [run_experiment:rate_1200_scapy_mit_on] [INFO] Started collector pid=16665
+[2026-05-04 04:29:13] [run_experiment:rate_1200_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:29:28] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:29:43] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:29:43] [run_experiment:rate_1200_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:29:43] [run_experiment:rate_1200_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:29:58] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:30:13] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:30:28] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:30:43] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:30:58] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:31:13] [run_experiment:rate_1200_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:32:13] [run_experiment:rate_1200_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:32:14] [run_experiment:rate_1200_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_1200_scapy_mit_on_20260504_042911
+[2026-05-04 04:32:14] [INFO] Completed run: rate_1200_scapy_mit_on
+[2026-05-04 04:32:14] [INFO] Starting run: rate_1500_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:32:14] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:32:17] [run_experiment:rate_1500_scapy_mit_on] [INFO] Starting run with PID=16728 duration=180 attack_delay=30
+[2026-05-04 04:32:17] [run_experiment:rate_1500_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:32:17] [run_experiment:rate_1500_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:32:17] [run_experiment:rate_1500_scapy_mit_on] [INFO] Started remote iperf server helper pid=16744
+[2026-05-04 04:32:18] [run_experiment:rate_1500_scapy_mit_on] [INFO] Started collector pid=16750
+[2026-05-04 04:32:18] [run_experiment:rate_1500_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:32:33] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:32:48] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:32:48] [run_experiment:rate_1500_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:32:48] [run_experiment:rate_1500_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:33:04] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:33:19] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:33:34] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:33:49] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:34:04] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:34:19] [run_experiment:rate_1500_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:35:19] [run_experiment:rate_1500_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:35:19] [run_experiment:rate_1500_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_1500_scapy_mit_on_20260504_043217
+[2026-05-04 04:35:19] [INFO] Completed run: rate_1500_scapy_mit_on
+[2026-05-04 04:35:19] [INFO] Starting run: rate_3000_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:35:19] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:35:22] [run_experiment:rate_3000_scapy_mit_on] [INFO] Starting run with PID=16812 duration=180 attack_delay=30
+[2026-05-04 04:35:22] [run_experiment:rate_3000_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:35:22] [run_experiment:rate_3000_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:35:22] [run_experiment:rate_3000_scapy_mit_on] [INFO] Started remote iperf server helper pid=16828
+[2026-05-04 04:35:23] [run_experiment:rate_3000_scapy_mit_on] [INFO] Started collector pid=16834
+[2026-05-04 04:35:24] [run_experiment:rate_3000_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:35:39] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:35:54] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:35:54] [run_experiment:rate_3000_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:35:54] [run_experiment:rate_3000_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:36:09] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:36:24] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:36:39] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:36:54] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:37:09] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:37:24] [run_experiment:rate_3000_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:38:24] [run_experiment:rate_3000_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:38:24] [run_experiment:rate_3000_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_3000_scapy_mit_on_20260504_043522
+[2026-05-04 04:38:24] [INFO] Completed run: rate_3000_scapy_mit_on
+[2026-05-04 04:38:24] [INFO] Starting run: rate_5000_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:38:24] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:38:28] [run_experiment:rate_5000_scapy_mit_on] [INFO] Starting run with PID=16896 duration=180 attack_delay=30
+[2026-05-04 04:38:28] [run_experiment:rate_5000_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:38:28] [run_experiment:rate_5000_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:38:28] [run_experiment:rate_5000_scapy_mit_on] [INFO] Started remote iperf server helper pid=16912
+[2026-05-04 04:38:29] [run_experiment:rate_5000_scapy_mit_on] [INFO] Started collector pid=16918
+[2026-05-04 04:38:29] [run_experiment:rate_5000_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:38:44] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:38:59] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:38:59] [run_experiment:rate_5000_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:38:59] [run_experiment:rate_5000_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:39:14] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:39:29] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:39:44] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:39:59] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:40:14] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:40:29] [run_experiment:rate_5000_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:41:29] [run_experiment:rate_5000_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:41:30] [run_experiment:rate_5000_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_5000_scapy_mit_on_20260504_043827
+[2026-05-04 04:41:30] [INFO] Completed run: rate_5000_scapy_mit_on
+[2026-05-04 04:41:30] [INFO] Starting run: rate_10000_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:41:30] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:41:33] [run_experiment:rate_10000_scapy_mit_on] [INFO] Starting run with PID=16982 duration=180 attack_delay=30
+[2026-05-04 04:41:33] [run_experiment:rate_10000_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:41:33] [run_experiment:rate_10000_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:41:33] [run_experiment:rate_10000_scapy_mit_on] [INFO] Started remote iperf server helper pid=16998
+[2026-05-04 04:41:34] [run_experiment:rate_10000_scapy_mit_on] [INFO] Started collector pid=17004
+[2026-05-04 04:41:34] [run_experiment:rate_10000_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:41:49] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:42:04] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:42:04] [run_experiment:rate_10000_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:42:05] [run_experiment:rate_10000_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:42:20] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:42:35] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:42:50] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:43:05] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:43:20] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:43:35] [run_experiment:rate_10000_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:44:35] [run_experiment:rate_10000_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:44:35] [run_experiment:rate_10000_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_10000_scapy_mit_on_20260504_044133
+[2026-05-04 04:44:35] [INFO] Completed run: rate_10000_scapy_mit_on
+[2026-05-04 04:44:35] [INFO] Running scapy packet size sweep
+[2026-05-04 04:44:35] [INFO] Starting run: size_64_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:44:35] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:44:38] [run_experiment:size_64_scapy_mit_on] [INFO] Starting run with PID=17068 duration=180 attack_delay=30
+[2026-05-04 04:44:38] [run_experiment:size_64_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:44:38] [run_experiment:size_64_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:44:39] [run_experiment:size_64_scapy_mit_on] [INFO] Started remote iperf server helper pid=17084
+[2026-05-04 04:44:40] [run_experiment:size_64_scapy_mit_on] [INFO] Started collector pid=17090
+[2026-05-04 04:44:40] [run_experiment:size_64_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:44:55] [run_experiment:size_64_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:45:10] [run_experiment:size_64_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:45:10] [run_experiment:size_64_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:45:10] [run_experiment:size_64_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:45:25] [run_experiment:size_64_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:45:40] [run_experiment:size_64_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:45:55] [run_experiment:size_64_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:46:10] [run_experiment:size_64_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:46:25] [run_experiment:size_64_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:46:40] [run_experiment:size_64_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:47:40] [run_experiment:size_64_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:47:41] [run_experiment:size_64_scapy_mit_on] [INFO] Run completed successfully
+done: results/size_64_scapy_mit_on_20260504_044438
+[2026-05-04 04:47:41] [INFO] Completed run: size_64_scapy_mit_on
+[2026-05-04 04:47:41] [INFO] Starting run: size_256_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:47:41] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:47:44] [run_experiment:size_256_scapy_mit_on] [INFO] Starting run with PID=17153 duration=180 attack_delay=30
+[2026-05-04 04:47:44] [run_experiment:size_256_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:47:44] [run_experiment:size_256_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:47:44] [run_experiment:size_256_scapy_mit_on] [INFO] Started remote iperf server helper pid=17169
+[2026-05-04 04:47:45] [run_experiment:size_256_scapy_mit_on] [INFO] Started collector pid=17175
+[2026-05-04 04:47:46] [run_experiment:size_256_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:48:01] [run_experiment:size_256_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:48:16] [run_experiment:size_256_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:48:16] [run_experiment:size_256_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:48:16] [run_experiment:size_256_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:48:31] [run_experiment:size_256_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:48:46] [run_experiment:size_256_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:49:01] [run_experiment:size_256_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:49:16] [run_experiment:size_256_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:49:31] [run_experiment:size_256_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:49:46] [run_experiment:size_256_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:50:46] [run_experiment:size_256_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:50:46] [run_experiment:size_256_scapy_mit_on] [INFO] Run completed successfully
+done: results/size_256_scapy_mit_on_20260504_044744
+[2026-05-04 04:50:46] [INFO] Completed run: size_256_scapy_mit_on
+[2026-05-04 04:50:46] [INFO] Starting run: size_512_scapy_mit_on (duration 180s + setup/recovery).
+[2026-05-04 04:50:46] [INFO] Clearing OVS flow tables on remote nodes (mode=on, bridges=ovs-lan1 ovs-lan2 ovs-lan3)
+[2026-05-04 04:50:50] [run_experiment:size_512_scapy_mit_on] [INFO] Starting run with PID=17238 duration=180 attack_delay=30
+[2026-05-04 04:50:50] [run_experiment:size_512_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-04 04:50:50] [run_experiment:size_512_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-04 04:50:50] [run_experiment:size_512_scapy_mit_on] [INFO] Started remote iperf server helper pid=17254
+[2026-05-04 04:50:51] [run_experiment:size_512_scapy_mit_on] [INFO] Started collector pid=17260
+[2026-05-04 04:50:51] [run_experiment:size_512_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-04 04:51:06] [run_experiment:size_512_scapy_mit_on] [INFO] attack_delay progress 15/30s
+[2026-05-04 04:51:21] [run_experiment:size_512_scapy_mit_on] [INFO] attack_delay progress 30/30s
+[2026-05-04 04:51:21] [run_experiment:size_512_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-04 04:51:21] [run_experiment:size_512_scapy_mit_on] [WARN] start_attack.sh exited with code 1; continuing run for diagnostics
+[2026-05-04 04:51:36] [run_experiment:size_512_scapy_mit_on] [INFO] attack_window progress 15/90s
+[2026-05-04 04:51:51] [run_experiment:size_512_scapy_mit_on] [INFO] attack_window progress 30/90s
+[2026-05-04 04:52:06] [run_experiment:size_512_scapy_mit_on] [INFO] attack_window progress 45/90s
+[2026-05-04 04:52:21] [run_experiment:size_512_scapy_mit_on] [INFO] attack_window progress 60/90s
+[2026-05-04 04:52:36] [run_experiment:size_512_scapy_mit_on] [INFO] attack_window progress 75/90s
+[2026-05-04 04:52:51] [run_experiment:size_512_scapy_mit_on] [INFO] attack_window progress 90/90s
+[2026-05-04 04:53:51] [run_experiment:size_512_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-04 04:53:52] [run_experiment:size_512_scapy_mit_on] [INFO] Run completed successfully
+done: results/size_512_scapy_mit_on_20260504_045049
+[2026-05-04 04:53:52] [INFO] Completed run: size_512_scapy_mit_on
+[2026-05-04 04:53:52] [INFO] Generating per-run plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[WARN] matplotlib not available; skipping plots
+[2026-05-04 04:53:53] [INFO] Generating cross-run summary
+[WARN] matplotlib not available; cross-run plots will be skipped
+/users/viliang/Self_Healing_SDN_Controller/results/summary/cross_run_summary.csv
+[2026-05-04 04:53:53] [DONE] Full experiment suite complete
+[2026-05-04 04:53:53] [DONE] Results directory: /users/viliang/Self_Healing_SDN_Controller/results
+FINAL_RESULT=success

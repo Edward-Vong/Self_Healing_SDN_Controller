@@ -1,0 +1,28 @@
+[2026-05-16 03:31:57] [run_experiment:hping_attack_mit_on] [INFO] Starting run with PID=26787 duration=75 attack_delay=0
+[2026-05-16 03:31:57] [run_experiment:hping_attack_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 03:31:57] [run_experiment:hping_attack_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 03:31:57] [run_experiment:hping_attack_mit_on] [INFO] Started remote iperf server helper pid=26805
+[2026-05-16 03:31:58] [run_experiment:hping_attack_mit_on] [INFO] Started collector pid=26813
+[2026-05-16 03:31:58] [run_experiment:hping_attack_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 03:31:58] [run_experiment:hping_attack_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 03:32:13] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 15/60s
+[2026-05-16 03:32:29] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 30/60s
+[2026-05-16 03:32:44] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 45/60s
+[2026-05-16 03:32:59] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 60/60s
+[2026-05-16 03:33:14] [run_experiment:hping_attack_mit_on] [INFO] Collector wait completed
+[2026-05-16 03:33:15] [run_experiment:hping_attack_mit_on] [INFO] Run completed successfully
+done: results/hping_attack_mit_on_20260516_033156
+[2026-05-16 06:41:35] [run_experiment:hping_attack_mit_on] [INFO] Starting run with PID=30752 duration=75 attack_delay=15
+[2026-05-16 06:41:36] [run_experiment:hping_attack_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 06:41:36] [run_experiment:hping_attack_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 06:41:36] [run_experiment:hping_attack_mit_on] [INFO] Started remote iperf server helper pid=30770
+[2026-05-16 06:41:37] [run_experiment:hping_attack_mit_on] [INFO] Started collector pid=30776
+[2026-05-16 06:41:37] [run_experiment:hping_attack_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 06:41:52] [run_experiment:hping_attack_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 06:41:52] [run_experiment:hping_attack_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 06:42:10] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 06:42:25] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 06:42:40] [run_experiment:hping_attack_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 06:42:53] [run_experiment:hping_attack_mit_on] [INFO] Collector wait completed
+[2026-05-16 06:42:54] [run_experiment:hping_attack_mit_on] [INFO] Run completed successfully
+done: results/hping_attack_mit_on_20260516_064135

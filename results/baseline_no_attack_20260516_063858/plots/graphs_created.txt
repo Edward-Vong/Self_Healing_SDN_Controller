@@ -1,0 +1,8 @@
+.\results\baseline_no_attack_20260516_063858\plots\packetin_rate_detection.png
+.\results\baseline_no_attack_20260516_063858\plots\cpu_over_time.png
+.\results\baseline_no_attack_20260516_063858\plots\mitigation_drops_over_time.png
+.\results\baseline_no_attack_20260516_063858\plots\mitigation_effectiveness_bar.png
+.\results\baseline_no_attack_20260516_063858\plots\controller_link_util_over_time.png
+.\results\baseline_no_attack_20260516_063858\plots\legitimate_rtt_combined.png
+.\results\baseline_no_attack_20260516_063858\plots\trusted_throughput_combined.png
+.\results\baseline_no_attack_20260516_063858\plots\mitigation_port_escalation.png

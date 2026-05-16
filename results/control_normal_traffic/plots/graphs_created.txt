@@ -1,0 +1,6 @@
+.\results\control_normal_traffic\plots\packetin_rate_detection.png
+.\results\control_normal_traffic\plots\cpu_over_time.png
+.\results\control_normal_traffic\plots\mitigation_drops_over_time.png
+.\results\control_normal_traffic\plots\mitigation_effectiveness_bar.png
+.\results\control_normal_traffic\plots\controller_link_util_over_time.png
+.\results\control_normal_traffic\plots\mitigation_port_escalation.png
