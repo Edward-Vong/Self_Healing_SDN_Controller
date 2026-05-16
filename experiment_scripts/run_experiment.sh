@@ -313,7 +313,23 @@ if [ "$RUN_ATTACK" = "yes" ]; then
     --python-bin "$_attack_python" >> "$OUT/experiment.log" 2>&1 || ATTACK_LAUNCH_RC=$?
 
   if [ "$ATTACK_LAUNCH_RC" -ne 0 ]; then
-    run_log "[WARN] start_attack.sh exited with code $ATTACK_LAUNCH_RC; continuing run for diagnostics"
+    run_log "[ERROR] start_attack.sh exited with code $ATTACK_LAUNCH_RC; aborting run"
+    exit "$ATTACK_LAUNCH_RC"
+  fi
+
+  sleep 2
+  if [ -f "$OUT/attack.pid" ]; then
+    attack_pid="$(cat "$OUT/attack.pid" 2>/dev/null || true)"
+    if [ -n "$attack_pid" ] && ! kill -0 "$attack_pid" 2>/dev/null; then
+      run_log "[ERROR] attack process died immediately; aborting run"
+      {
+        echo "----- attack_stdout.log -----"
+        cat "$OUT/attack_stdout.log" 2>/dev/null || true
+        echo "----- attack_stderr.log -----"
+        cat "$OUT/attack_stderr.log" 2>/dev/null || true
+      } >> "$OUT/experiment.log"
+      exit 1
+    fi
   fi
 
   sleep_with_progress "$ATTACK_DURATION" "attack_window"

@@ -450,6 +450,22 @@ $SSH_VICTIM "hostname"
 log_stage "[INFO] Verifying controller API at $CONTROLLER_URL"
 curl -fsS "$CONTROLLER_URL/stats" >/dev/null
 
+CONNECTED_SWITCHES="$(curl -fsS "$CONTROLLER_URL/stats" | "$PYTHON_BIN" -c '
+import json, sys
+d = json.load(sys.stdin)
+print(int(d.get("connected_switches", 0)))
+')"
+
+EXPECTED_SWITCHES=3
+
+if [ "$CONNECTED_SWITCHES" -lt "$EXPECTED_SWITCHES" ]; then
+  echo "[ERROR] Expected at least $EXPECTED_SWITCHES OpenFlow switches, but controller sees $CONNECTED_SWITCHES." >&2
+  echo "[ERROR] Check ovs-lan1/ovs-lan2/ovs-lan3 controller connections." >&2
+  exit 1
+fi
+
+log_stage "[INFO] OpenFlow switches connected: $CONNECTED_SWITCHES"
+
 log_stage "[INFO] Ensuring packetin_attack.py exists on attacker"
 $SSH_ATTACKER "mkdir -p '$PROJECT_DIR_VAL/experiment_scripts'"
 scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJECT_DIR_VAL/experiment_scripts/packetin_attack.py" >/dev/null

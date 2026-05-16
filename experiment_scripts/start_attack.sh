@@ -48,7 +48,7 @@ fi
 
 case "$METHOD" in
   scapy)
-    CMD="sudo '$PYTHON_BIN' '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method scapy --iface '$IFACE' --rate '$RATE' --size '$SIZE' --duration '$DURATION' --log '$ATTACK_LOG'"
+    CMD="sudo -n '$PYTHON_BIN' '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method scapy --iface '$IFACE' --rate '$RATE' --size '$SIZE' --duration '$DURATION' --target '$TARGET' --target-prefix '$TARGET_PREFIX' --log '$ATTACK_LOG'"
     ;;
   hping3)
     if [ -z "$TARGET" ]; then
