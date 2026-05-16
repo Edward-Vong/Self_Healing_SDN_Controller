@@ -78,21 +78,74 @@ def add_transition_markers(events):
             continue
         style = styles[name]
         label = style['label'] if name not in drawn else None
-        plt.axvline(num(e, 't'), linestyle=':', color=style['color'], label=label)
+        plt.axvline(num(e, 't'), color=style['color'], label=label)
         drawn.add(name)
 
 def place_legend(outside=False):
-    """Place legends consistently without hiding dense time-series data."""
+    """Place the legend inside the plot in the corner with the lowest data density."""
     ax = plt.gca()
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
-    if outside or len(labels) > 5:
-        ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0)
-        plt.tight_layout(rect=[0, 0, 0.80, 1])
+
+    loc = _choose_legend_location(ax)
+    ax.legend(loc=loc, framealpha=0.85, edgecolor='black', fancybox=True)
+    plt.tight_layout()
+
+
+def _choose_legend_location(ax):
+    candidates = ['upper right', 'upper left', 'lower right', 'lower left']
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    if x0 == x1 or y0 == y1:
+        return 'upper right'
+
+    points = []
+    for line in ax.get_lines():
+        xs = line.get_xdata()
+        ys = line.get_ydata()
+        points.extend(zip(xs, ys))
+
+    if not points:
+        return 'upper right'
+
+    best_loc = None
+    best_score = None
+    for loc in candidates:
+        score = _legend_overlap_score(points, x0, x1, y0, y1, loc)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_loc = loc
+    return best_loc or 'upper right'
+
+
+def _legend_overlap_score(points, x0, x1, y0, y1, loc):
+    x_span = x1 - x0
+    y_span = y1 - y0
+    x_frac = 0.30
+    y_frac = 0.25
+
+    if 'left' in loc:
+        x_min = x0
+        x_max = x0 + x_span * x_frac
     else:
-        ax.legend(loc='best')
-        plt.tight_layout()
+        x_min = x1 - x_span * x_frac
+        x_max = x1
+
+    if 'lower' in loc:
+        y_min = y0
+        y_max = y0 + y_span * y_frac
+    else:
+        y_min = y1 - y_span * y_frac
+        y_max = y1
+
+    score = 0
+    for x, y in points:
+        if x_min <= x <= x_max and y_min <= y <= y_max:
+            score += 1
+            if score > 100:
+                break
+    return score
 
 def _csv(d, name):
     """Resolve a CSV/JSON data file: prefer csv/ subdir (post-run), fall back to root."""
@@ -119,7 +172,7 @@ def save_line(rows, x, ys, labels, title, ylabel, out):
         yvals=[num(r,y) for r in rows]
         plt.plot(xs, yvals, label=l)
         all_vals.extend(yvals)
-    plt.xlabel('time (s)' if x=='t' else x); plt.ylabel(ylabel); plt.title(title)
+    plt.xlabel('time (seconds)' if x=='t' else x); plt.ylabel(ylabel); plt.title(title)
     _smart_ylim(all_vals)
     plt.grid(True)
     place_legend()
@@ -214,6 +267,85 @@ def write_lockdown_summary(run_dir, events, status_plot, link_plot, mit_plot):
     return summary
 
 
+def best_fit_series(series, degree=2):
+    fitted = []
+    for rate, run_dir, points in series:
+        coeffs = fit_polynomial(points, degree=degree)
+        if coeffs is None:
+            continue
+        min_t = min(t for t, _rtt in points)
+        max_t = max(t for t, _rtt in points)
+        if max_t == min_t:
+            fitted_points = [(min_t, evaluate_polynomial(coeffs, min_t))]
+        else:
+            step = (max_t - min_t) / 50.0
+            fitted_points = [
+                (min_t + i * step, evaluate_polynomial(coeffs, min_t + i * step))
+                for i in range(51)
+            ]
+        mean_rtt = sum(rtt for _t, rtt in points) / len(points)
+        fitted.append((rate, run_dir, fitted_points, coeffs, mean_rtt))
+    return fitted
+
+
+def fit_polynomial(points, degree=2):
+    if len(points) < degree + 1:
+        return None
+
+    xs = [t for t, _rtt in points]
+    ys = [rtt for _t, rtt in points]
+    order = degree + 1
+
+    # Build normal equations for polynomial regression.
+    A = [[0.0] * order for _ in range(order)]
+    b = [0.0] * order
+    for x, y in zip(xs, ys):
+        powers = [1.0]
+        for _ in range(1, 2 * degree + 1):
+            powers.append(powers[-1] * x)
+        for i in range(order):
+            for j in range(order):
+                A[i][j] += powers[i + j]
+            b[i] += y * powers[i]
+
+    coeffs = _solve_linear_system(A, b)
+    return coeffs
+
+
+def evaluate_polynomial(coeffs, x):
+    return sum(coef * (x ** idx) for idx, coef in enumerate(coeffs))
+
+
+def _solve_linear_system(A, b):
+    n = len(b)
+    M = [row[:] for row in A]
+    y = b[:]
+
+    for i in range(n):
+        pivot = i
+        for j in range(i + 1, n):
+            if abs(M[j][i]) > abs(M[pivot][i]):
+                pivot = j
+        if abs(M[pivot][i]) < 1e-12:
+            return None
+        if pivot != i:
+            M[i], M[pivot] = M[pivot], M[i]
+            y[i], y[pivot] = y[pivot], y[i]
+
+        diag = M[i][i]
+        M[i] = [mij / diag for mij in M[i]]
+        y[i] /= diag
+
+        for j in range(n):
+            if j == i:
+                continue
+            factor = M[j][i]
+            if factor:
+                M[j] = [m_j - factor * m_i for m_j, m_i in zip(M[j], M[i])]
+                y[j] -= factor * y[i]
+
+    return y
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument('input_dir')
@@ -254,7 +386,7 @@ def main():
         ys=[num(r,'packet_in_rate') for r in status_plot]
         plt.plot(xs,ys,label='Packet-In rate')
         thr=[num(r,'threshold_rate') for r in status_plot if r.get('threshold_rate') not in ('',None)]
-        if thr: plt.axhline(thr[0], linestyle='--', label='Threshold')
+        if thr: plt.axhline(thr[0], label='Threshold')
         add_transition_markers(events)
 
         mitigation_inactive_time = None
@@ -265,10 +397,10 @@ def main():
                 mitigation_inactive_time = num(status_plot[i+1], 't')
                 break
         if mitigation_inactive_time:
-            plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
+            plt.axvline(mitigation_inactive_time, color='purple', label='mitigation_inactive')
 
         _smart_ylim(ys)
-        plt.xlabel('time (s)'); plt.ylabel('Packet-In events/sec')
+        plt.xlabel('time (seconds)'); plt.ylabel('Packet-In events/sec')
         plt.title('Attack detection: Packet-In rate over time')
         plt.grid(True)
         place_legend(outside=True)
@@ -291,10 +423,10 @@ def main():
                     mitigation_inactive_time = num(status_plot[i+1], 't')
                     break
         if mitigation_inactive_time:
-            plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
+            plt.axvline(mitigation_inactive_time, color='purple', label='mitigation_inactive')
 
         _smart_ylim(ys)
-        plt.xlabel('time (s)')
+        plt.xlabel('time (seconds)')
         plt.ylabel('CPU %')
         plt.title('Controller CPU over time')
         plt.grid(True)
@@ -329,7 +461,7 @@ def main():
         plt.plot(xs, overrate_rates, label='over-rate drops/sec')
 
         _smart_ylim(mitigated_rates + unknown_rates + overrate_rates)
-        plt.xlabel('time (s)')
+        plt.xlabel('time (seconds)')
         plt.ylabel('drops/sec')
         plt.title('Mitigation drops rate over time')
         plt.grid(True)
@@ -394,7 +526,7 @@ def main():
             plt.plot(xs,rx,label='rx pps')
             plt.plot(xs,tx,label='tx pps')
             all_vals.extend(total + rx + tx)
-            ylabel='pps'
+            ylabel='packet per second'
             title='Controller link packet rate over time'
         else:
             total=[num(r,'total_mbps') for r in link_plot]
@@ -404,12 +536,12 @@ def main():
             plt.plot(xs,rx,label='rx Mbps')
             plt.plot(xs,tx,label='tx Mbps')
             all_vals.extend(total + rx + tx)
-            ylabel='Mbps'
+            ylabel='Mbits per second'
             title='Controller link utilization over time (legacy)'
 
         add_transition_markers(events)
         _smart_ylim(all_vals)
-        plt.xlabel('time (s)')
+        plt.xlabel('time (seconds)')
         plt.ylabel(ylabel)
         plt.title(title)
         plt.grid(True)
@@ -448,7 +580,7 @@ def main():
             axes[2].step(mit_x, rate_limited, where='post', label='rate-limited ports', color='tab:purple')
             axes[2].step(mit_x, escalated, where='post', label='lockdown/drop ports', color='tab:brown')
             axes[2].set_ylabel('ports')
-            axes[2].set_xlabel('time (s)')
+            axes[2].set_xlabel('time (seconds)')
             axes[2].grid(True, alpha=0.35)
 
             attack_end = ev_times.get('attack_ended')
@@ -456,7 +588,7 @@ def main():
             for ax in axes:
                 ax.axvspan(metering_start, escalation_start, color='tab:purple', alpha=0.08, label='metering window')
                 ax.axvspan(escalation_start, window_end, color='tab:brown', alpha=0.10, label='lockdown window')
-                ax.axvline(escalation_start, color='tab:brown', linestyle=':', label='lockdown starts')
+                ax.axvline(escalation_start, color='tab:brown', label='lockdown starts')
 
             if summary:
                 pir_drop = summary.get('packet_in_rate_reduction_pct')
@@ -534,11 +666,11 @@ def main():
             plt.plot([r['t'] for r in rows_plot], [r['rtt_ms'] for r in rows_plot], label=label)
 
     if has_ping:
-        plt.axvline(attack_delay, linestyle='--', label='attack starts')
+        plt.axvline(attack_delay, label='attack starts')
 
         ev_times = event_times(events, ['mitigation_active'])
         if 'mitigation_active' in ev_times:
-            plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
+            plt.axvline(ev_times['mitigation_active'],label='mitigation starts', color='green')
 
         mitigation_inactive_time = None
         if status_plot:
@@ -549,12 +681,12 @@ def main():
                     mitigation_inactive_time = num(status_plot[i+1], 't')
                     break
         if mitigation_inactive_time is not None:
-            plt.axvline(mitigation_inactive_time, linestyle='--', color='purple', label='mitigation_inactive')
+            plt.axvline(mitigation_inactive_time, color='purple', label='mitigation_inactive')
 
         ax = plt.gca()
         rtt_flat = [v for line in ax.get_lines() for v in line.get_ydata()]
         _smart_ylim(rtt_flat)
-        plt.xlabel('time (s)')
+        plt.xlabel('time (seconds)')
         plt.ylabel('RTT ms')
         plt.title('Legitimate Traffic RTT During Attack and Recovery')
         plt.grid(True)
@@ -625,15 +757,15 @@ def main():
         plt.plot([r['t'] for r in rows_plot], [r['mbps'] for r in rows_plot], label=label)
 
     if has_iperf:
-        plt.axvline(attack_delay, linestyle='--', label='attack starts')
+        plt.axvline(attack_delay, label='attack starts', color='green')
         ev_times = event_times(events, ['mitigation_active'])
         if 'mitigation_active' in ev_times:
-            plt.axvline(ev_times['mitigation_active'], linestyle=':', label='mitigation starts')
+            plt.axvline(ev_times['mitigation_active'], label='mitigation starts', color='purple')
         ax = plt.gca()
         iperf_flat = [v for line in ax.get_lines() for v in line.get_ydata()]
         _smart_ylim(iperf_flat)
-        plt.xlabel('time (s)')
-        plt.ylabel('Mbits/sec')
+        plt.xlabel('time (seconds)')
+        plt.ylabel('Mbits per second')
         plt.title('Trusted Throughput During Attack and Recovery')
         plt.grid(True)
         place_legend()
@@ -655,9 +787,9 @@ def main():
         
         ev_times=event_times(events, ['mitigation_active'])
         if 'mitigation_active' in ev_times:
-            plt.axvline(ev_times['mitigation_active'], linestyle=':', color='green', alpha=0.5, label='mitigation starts')
+            plt.axvline(ev_times['mitigation_active'], color='green', alpha=0.5, label='mitigation starts')
         
-        plt.xlabel('time (s)')
+        plt.xlabel('time (seconds)')
         plt.ylabel('number of ports')
         plt.title('Port-level mitigation escalation over time')
         plt.grid(True)
@@ -674,7 +806,7 @@ def main():
             plt.figure(figsize=(10, 6))
             plt.scatter([num(e,'t') for e in evs],[order.index(e.get('event')) for e in evs], s=100)
             plt.yticks(range(len(order)), order)
-            plt.xlabel('time (s)')
+            plt.xlabel('time (seconds)')
             plt.title('Detection and response timeline')
             plt.grid(True, alpha=0.3)
             # Set y-axis limits with padding to zoom in on the metrics
