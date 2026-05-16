@@ -75,20 +75,22 @@ def run_rate_step(
     run_dir = os.path.join(out_dir, "rate_{}_pps".format(rate))
     os.makedirs(run_dir, exist_ok=True)
     script_dir = remote_script_dir or os.path.dirname(os.path.abspath(__file__))
+    attack_sent_log = "/tmp/sdn_saturation_attack_sent_{}_pps.csv".format(rate) if cmd_prefix else os.path.join(run_dir, "attack_sent.csv")
     
     # Prepare attack command
     if attack_method == "scapy":
         attack_cmd = (
             "cd '{script_dir}' && sudo {python} packetin_attack.py --method scapy --iface {iface} "
-            "--rate {rate} --size {size} --duration {dur} --target {target}".format(
+            "--rate {rate} --size {size} --duration {dur} --target {target} --log {log}".format(
                 script_dir=script_dir,
                 python=python_bin,
-                iface=iface, rate=rate, size=size, dur=duration, target=target)
-        )
-    elif attack_method == "hping3":
-        attack_cmd = (
-            "timeout {} bash -lc 'for p in 9991 9992 9993; do "
-            "sudo hping3 --udp --flood --rand-source -d {} -p $p {} & done; wait'".format(duration, size, target)
+                iface=iface,
+                rate=rate,
+                size=size,
+                dur=duration,
+                target=target,
+                log=shlex.quote(attack_sent_log),
+            )
         )
     else:
         attack_cmd = (
@@ -229,7 +231,7 @@ def main():
     p.add_argument('--out', required=True, help='Output directory for results')
     p.add_argument('--target', required=True, help='Victim IP for attack')
     p.add_argument('--iface', required=True, help='Attacker interface (e.g. eth1)')
-    p.add_argument('--attack-method', default='hping3', choices=['hping3', 'scapy', 'udp'])
+    p.add_argument('--attack-method', default='scapy', choices=['scapy', 'udp'])
     p.add_argument('--cmd-prefix', default='', help='SSH prefix for remote execution (e.g., ssh user@host)')
     p.add_argument('--rtt-cmd-prefix', default='', help='SSH prefix for RTT ping (e.g., ssh user@trusted-node). If empty, ping runs locally on the controller.')
     p.add_argument('--step-duration', type=int, default=30, help='Duration per rate step (seconds)')

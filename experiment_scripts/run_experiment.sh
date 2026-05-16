@@ -10,7 +10,7 @@ DURATION=180
 MITIGATION=on
 OUT_BASE="results"
 CONTROLLER="http://127.0.0.1:8080"
-ATTACK_METHOD="hping3"
+ATTACK_METHOD="scapy"
 ATTACK_IFACE="h2-eth0"
 ATTACK_LENGTH=""
 ATTACK_TARGET=""
@@ -342,11 +342,8 @@ fi
 
 # Stop attack processes on the attacker host when running remotely.
 if [ -n "$CMD_PREFIX_ATTACK" ]; then
-  eval "$CMD_PREFIX_ATTACK sudo pkill -f 'hping3 --udp --flood'" 2>/dev/null || true
   eval "$CMD_PREFIX_ATTACK 'sudo pkill -f [p]acketin_attack.py'" 2>/dev/null || true
 else
-  # Local fallback for Mininet/dev runs. Use a narrow match to avoid killing this script.
-  sudo pkill -f 'hping3 --udp --flood' 2>/dev/null || true
   sudo pkill -f '[p]acketin_attack.py' 2>/dev/null || true
 fi
 

