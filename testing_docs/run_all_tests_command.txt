@@ -1,102 +1,24 @@
-Run from repo root on controller node.
+Run from the controller node at the repository root.
 
-Copy-paste commands (current topology and script flags)
-- Baseline + saturation enabled (default saturation behavior), 75s total run:
+This runs the full experiment suite using the topology values in
+experiment_scripts/switches.conf. Each experiment run lasts 75 seconds:
+
+- 15 seconds of normal traffic before the attack starts
+- 45 seconds of attack traffic
+- 15 seconds after the attack window for recovery and leftover flood traffic to clear
 
 ```bash
 bash experiment_scripts/run_all_tests.sh \
-  --run-baseline-control \
   --duration 75 \
-  --attack-length 60 \
   --attack-delay 15 \
+  --attack-length 45 \
+  --clear-ovs off \
   2>&1 | tee run_all_75s.log
 ```
 
-- Baseline + saturation enabled, with 15s warmup + 60s attack + 15s cooldown:
+After it finishes, check:
 
 ```bash
-bash experiment_scripts/run_all_tests.sh \
-  --run-baseline-control \
-  --duration 90 \
-  --attack-length 60 \
-  --attack-delay 15 \
-  2>&1 | tee run_all_90s.log
+cat results/last_run_status.txt
+tail -n 80 run_all_75s.log
 ```
-
-Notes:
-- Do not use `--run-saturation` (not a valid flag in this script).
-- Saturation runs by default unless `--skip-saturation` is passed.
-
-Current default behavior in run_all_tests.sh (fast profile):
-- attack-delay defaults to 0
-- baseline-control calibration stage runs by default
-- if baseline-control is skipped and no --threshold is provided, threshold defaults to 300
-- to skip baseline calibration for a quick run, add: --skip-baseline-control --threshold 50
-
-Estimated wall-clock times:
-- Quick run below (duration=90, skip sweeps): ~5-7 minutes
-- Full default run (with saturation + rate + packet-size sweeps): ~30-35 minutes
-- If --run-baseline-control is enabled: add ~2 minutes
-
-Quick iteration run (much faster, good for validation while debugging):
-- attack-delay 0: attack starts immediately (no warmup wait per run)
-- skip-baseline-control: skip the 180s threshold calibration run (uses fixed threshold=50)
-- threshold 50: fixed detection threshold so baseline-control is not needed
-- skip-sweeps: run only the core comparison runs + baseline_no_attack
-
-bash experiment_scripts/run_all_tests.sh \
-  --skip-baseline-control \
-  --threshold 50 \
-  --skip-sweeps \
-  2>&1 | tee run_all_quick.log
-
-Full run (long, complete comparison and sweeps):
-
-bash experiment_scripts/run_all_tests.sh 2>&1 | tee run_all.log
-
-Packet-size sweep only context:
-- The full sweep section now includes Scapy mitigation-on packet sizes: 64B, 256B, 512B.
-- Defaults: --size-sweep-rate 1200 --size-sweep-sizes 64,256,512.
-- Results are named like: size_64_scapy_mit_on, size_256_scapy_mit_on, size_512_scapy_mit_on.
-- Summary plots are emitted as size_vs_*.png when at least two packet sizes complete.
-- Use --skip-rate-sweep to run packet-size sweep without the rate sweep.
-
-Example with explicit packet-size sweep values:
-
-bash experiment_scripts/run_all_tests.sh \
-  --skip-baseline-control \
-  --threshold 50 \
-  --skip-saturation \
-  --skip-core \
-  --skip-rate-sweep \
-  --size-sweep-rate 1200 \
-  --size-sweep-sizes 64,256,512 \
-  2>&1 | tee run_all_size_sweep.log
-
---- OR explicit form with all values spelled out ---
-
-bash experiment_scripts/run_all_tests.sh \
-  --controller http://128.110.223.12:8080 \
-  --user viliang \
-  --trusted-host hpvm126-1.utah.cloudlab.us \
-  --attacker-host hpvm126-2.utah.cloudlab.us \
-  --victim-host hpvm126-3.utah.cloudlab.us \
-  --trusted-data-ip 10.10.10.1 \
-  --attacker-data-ip 10.10.10.2 \
-  --victim-data-ip 10.10.10.3 \
-  --project-dir /users/viliang/Self_Healing_SDN_Controller \
-  --controller-iface eth0 \
-  --attack-iface ovs-lan2 \
-  --duration 90 \
-  --attack-delay 0 \
-  --attack-length 45 \
-  --skip-sweeps \
-  --skip-baseline-control \
-  --threshold 50 \
-  --clear-ovs on \
-  2>&1 | tee run_all_quick.log
-
-Quick checks after run:
-- cat results/last_run_status.txt
-- cat results/last_run_status.json
-- tail -n 80 run_all.log

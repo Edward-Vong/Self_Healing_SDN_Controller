@@ -65,6 +65,7 @@ def run_rate_step(
     size=256,
     rtt_cmd_prefix='',
     python_bin='python3',
+    remote_script_dir='',
     controller='http://127.0.0.1:8080',
     collect_controller_metrics=True,
     controller_iface='',
@@ -73,13 +74,14 @@ def run_rate_step(
     """Run attack at a single rate; return avg RTT and max CPU."""
     run_dir = os.path.join(out_dir, "rate_{}_pps".format(rate))
     os.makedirs(run_dir, exist_ok=True)
+    script_dir = remote_script_dir or os.path.dirname(os.path.abspath(__file__))
     
     # Prepare attack command
     if attack_method == "scapy":
         attack_cmd = (
             "cd '{script_dir}' && sudo {python} packetin_attack.py --method scapy --iface {iface} "
             "--rate {rate} --size {size} --duration {dur} --target {target}".format(
-                script_dir=os.path.dirname(os.path.abspath(__file__)),
+                script_dir=script_dir,
                 python=python_bin,
                 iface=iface, rate=rate, size=size, dur=duration, target=target)
         )
@@ -90,8 +92,15 @@ def run_rate_step(
         )
     else:
         attack_cmd = (
-            "{} packetin_attack.py --method udp --rate {} "
-            "--size {} --duration {} --target {}".format(python_bin, rate, size, duration, target)
+            "cd '{script_dir}' && {python} packetin_attack.py --method udp --rate {rate} "
+            "--size {size} --duration {dur} --target {target}".format(
+                script_dir=script_dir,
+                python=python_bin,
+                rate=rate,
+                size=size,
+                dur=duration,
+                target=target,
+            )
         )
     
     if cmd_prefix:
@@ -153,7 +162,8 @@ def run_rate_step(
     else:
         ping_cmd = raw_ping
     print("  Running ping for RTT measurement...")
-    subprocess.run(ping_cmd, shell=True, stdout=open(ping_log, 'w'), stderr=subprocess.STDOUT)
+    with open(ping_log, 'w') as ping_fh:
+        subprocess.run(ping_cmd, shell=True, stdout=ping_fh, stderr=subprocess.STDOUT)
     
     # Parse ping results
     rtt_values = []
@@ -229,6 +239,7 @@ def main():
                    help='Comma-separated list of attack rates to test (pps)')
     p.add_argument('--size', type=int, default=256, help='Packet size in bytes for the attack')
     p.add_argument('--python-bin', default='python3', help='Python interpreter on the attacker node (for scapy/udp methods)')
+    p.add_argument('--remote-script-dir', default='', help='Repo experiment_scripts path on the attacker node')
     p.add_argument(
         '--mitigation-mode',
         default='keep',
@@ -282,6 +293,7 @@ def main():
             size=args.size,
             rtt_cmd_prefix=args.rtt_cmd_prefix,
             python_bin=args.python_bin,
+            remote_script_dir=args.remote_script_dir,
             controller=args.controller,
             collect_controller_metrics=(not args.no_collect_metrics),
             controller_iface=args.controller_iface,

@@ -36,13 +36,20 @@ TRUSTED=""
 ATTACKER=""
 VICTIM=""
 PROJECT_DIR=""
+TRUSTED_DATA_IP=""
+ATTACKER_DATA_IP=""
+VICTIM_DATA_IP=""
+VALID_TARGET_IP=""
+SWITCH_MONITOR_IPS=""
 
 # Load switch and CloudLab defaults first, then allow CLI args to override them.
 SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
 if [ -f "$SWITCHES_CONF" ]; then
   . "$SWITCHES_CONF"
 fi
-OVS_SWITCHES="${OVS_SWITCHES:-s1 s2 s3 s4}"
+if [ "${OVS_SWITCHES+x}" != "x" ]; then
+  OVS_SWITCHES="s1 s2 s3 s4"
+fi
 # Use SWITCH_MONITOR_IPS from switches.conf as the default for --switch-ips.
 SWITCH_IPS="${SWITCH_IPS:-${SWITCH_MONITOR_IPS:-}}"
 
@@ -96,8 +103,16 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 # Derive practical defaults so routine CloudLab runs need fewer flags.
-if [ -z "$ATTACK_TARGET" ] && [ -n "$VICTIM" ]; then
-  ATTACK_TARGET="$VICTIM"
+if [ -z "$ATTACK_TARGET" ]; then
+  if [ -n "$VICTIM_DATA_IP" ]; then
+    ATTACK_TARGET="$VICTIM_DATA_IP"
+  elif [ -n "$VICTIM" ]; then
+    ATTACK_TARGET="$VICTIM"
+  fi
+fi
+
+if [ -z "$VALID_TARGET" ] && [ -n "$VALID_TARGET_IP" ]; then
+  VALID_TARGET="$VALID_TARGET_IP"
 fi
 
 if [ -n "$USER" ] && [ -n "$ATTACKER" ] && [ -z "$CMD_PREFIX_ATTACK" ]; then
@@ -194,7 +209,7 @@ curl -s -X POST "$CONTROLLER/trust/clear" >> "$OUT/experiment.log" 2>&1 || true
 curl -s -X POST "$CONTROLLER/mitigate/end" >> "$OUT/experiment.log" 2>&1 || true
 run_log "[INFO] Controller reset/config endpoints attempted"
 
-if [ "$CLEAR_OVS" = "on" ] || [ "$CLEAR_OVS" = "auto" ]; then
+if { [ "$CLEAR_OVS" = "on" ] || [ "$CLEAR_OVS" = "auto" ]; } && [ -n "$OVS_SWITCHES" ]; then
   echo "[INFO] Clearing local OVS flow tables if Mininet switches exist..." >> "$OUT/experiment.log"
   for sw in $OVS_SWITCHES; do
     sudo ovs-ofctl -O OpenFlow13 del-flows "$sw" >> "$OUT/experiment.log" 2>&1 || true
@@ -225,20 +240,29 @@ if [ "$IPERF" = "on" ] && [ -n "$IPERF_SERVER_PREFIX" ]; then
 fi
 
 # Default switch IPs to valid+attack targets if not explicitly set.
+COLLECTOR_ARGS=(
+  --duration "$DURATION"
+  --out "$OUT"
+  --controller "$CONTROLLER"
+  --iface "$CONTROLLER_IFACE"
+)
+if [ -n "$THRESHOLD" ]; then
+  COLLECTOR_ARGS+=(--threshold "$THRESHOLD")
+fi
+
 if [ -z "$SWITCH_IPS" ]; then
-  SWITCH_IPS_ARG=""
   _ips=""
   [ -n "$VALID_TARGET" ] && _ips="$VALID_TARGET"
   if [ -n "$ATTACK_TARGET" ] && [ "$ATTACK_TARGET" != "$VALID_TARGET" ]; then
     _ips="${_ips:+$_ips,}$ATTACK_TARGET"
   fi
-  [ -n "$_ips" ] && SWITCH_IPS_ARG="--switch-ips $_ips"
+  [ -n "$_ips" ] && COLLECTOR_ARGS+=(--switch-ips "$_ips")
 else
-  SWITCH_IPS_ARG="--switch-ips $SWITCH_IPS"
+  COLLECTOR_ARGS+=(--switch-ips "$SWITCH_IPS")
 fi
 
 # Start collectors first, then legitimate warm-up traffic.
-"$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" --duration "$DURATION" --out "$OUT" --controller "$CONTROLLER" --iface "$CONTROLLER_IFACE" ${THRESHOLD:+--threshold "$THRESHOLD"} $SWITCH_IPS_ARG > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
+"$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" "${COLLECTOR_ARGS[@]}" > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
 echo $! > "$OUT/collector.pid"
 run_log "[INFO] Started collector pid=$(cat "$OUT/collector.pid" 2>/dev/null || echo unknown)"
 for _ in 1 2 3 4 5; do

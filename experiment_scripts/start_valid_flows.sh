@@ -24,14 +24,47 @@ while [ $# -gt 0 ]; do
   esac
 done
 mkdir -p "$OUT"
+
+case "$MODE" in
+  existing|new|both) ;;
+  *) echo "Unknown valid flow mode: $MODE" >&2; exit 2 ;;
+esac
+
+if [ -z "$TARGET" ]; then
+  echo "Missing valid traffic target" >&2
+  exit 2
+fi
+
+run_command_bg() {
+  local name="$1"
+  local command="$2"
+  local full_command="$command"
+
+  if [ -n "$CMD_PREFIX" ]; then
+    full_command="$CMD_PREFIX $command"
+  fi
+
+  eval "$full_command" > "$OUT/${name}.log" 2> "$OUT/${name}.err" &
+  echo $! > "$OUT/${name}.pid"
+}
+
+run_delayed_bg() {
+  local name="$1"
+  local delay="$2"
+  local command="$3"
+  local full_command="$command"
+
+  if [ -n "$CMD_PREFIX" ]; then
+    full_command="$CMD_PREFIX $command"
+  fi
+
+  ( sleep "$delay"; eval "$full_command" ) > "$OUT/${name}.log" 2> "$OUT/${name}.err" &
+  echo $! > "$OUT/${name}.pid"
+}
+
 run_bg() {
   local name="$1"; shift
-  if [ -n "$CMD_PREFIX" ]; then
-    eval "$CMD_PREFIX $*" > "$OUT/${name}.log" 2> "$OUT/${name}.err" &
-  else
-    eval "$*" > "$OUT/${name}.log" 2> "$OUT/${name}.err" &
-  fi
-  echo $! > "$OUT/${name}.pid"
+  run_command_bg "$name" "$*"
 }
 if [ "$MODE" = "existing" ] || [ "$MODE" = "both" ]; then
   run_bg ping_existing "ping -i '$INTERVAL' -s '$SIZE' -w '$DURATION' '$TARGET'"
@@ -40,11 +73,12 @@ if [ "$MODE" = "existing" ] || [ "$MODE" = "both" ]; then
   fi
 fi
 if [ "$MODE" = "new" ] || [ "$MODE" = "both" ]; then
-  ( sleep "$NEW_DELAY"; if [ -n "$CMD_PREFIX" ]; then eval "$CMD_PREFIX ping -i '$INTERVAL' -s '$SIZE' -w '$((DURATION-NEW_DELAY))' '$TARGET'"; else eval "ping -i '$INTERVAL' -s '$SIZE' -w '$((DURATION-NEW_DELAY))' '$TARGET'"; fi ) > "$OUT/ping_new.log" 2> "$OUT/ping_new.err" &
-  echo $! > "$OUT/ping_new.pid"
-  if [ "$IPERF" = "on" ]; then
-    ( sleep "$NEW_DELAY"; if [ -n "$CMD_PREFIX" ]; then eval "$CMD_PREFIX iperf -c '$TARGET' -t '$((DURATION-NEW_DELAY))' -i 1"; else eval "iperf -c '$TARGET' -t '$((DURATION-NEW_DELAY))' -i 1"; fi ) > "$OUT/iperf_new.log" 2> "$OUT/iperf_new.err" &
-    echo $! > "$OUT/iperf_new.pid"
+  new_duration=$((DURATION-NEW_DELAY))
+  if [ "$new_duration" -gt 0 ]; then
+    run_delayed_bg ping_new "$NEW_DELAY" "ping -i '$INTERVAL' -s '$SIZE' -w '$new_duration' '$TARGET'"
+    if [ "$IPERF" = "on" ]; then
+      run_delayed_bg iperf_new "$NEW_DELAY" "iperf -c '$TARGET' -t '$new_duration' -i 1"
+    fi
   fi
 fi
 echo "valid_flows_started mode=$MODE target=$TARGET"

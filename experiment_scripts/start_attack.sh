@@ -73,10 +73,11 @@ case "$METHOD" in
 esac
 
 if [ -n "$CMD_PREFIX" ]; then
-  eval "$CMD_PREFIX $CMD" > "$OUT/attack_stdout.log" 2> "$OUT/attack_stderr.log" &
+  FULL_CMD="$CMD_PREFIX $CMD"
 else
-  eval "$CMD" > "$OUT/attack_stdout.log" 2> "$OUT/attack_stderr.log" &
+  FULL_CMD="$CMD"
 fi
 
+eval "$FULL_CMD" > "$OUT/attack_stdout.log" 2> "$OUT/attack_stderr.log" &
 echo $! > "$OUT/attack.pid"
 echo "attack_pid=$(cat "$OUT/attack.pid") method=$METHOD"

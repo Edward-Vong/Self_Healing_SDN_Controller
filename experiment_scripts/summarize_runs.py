@@ -28,8 +28,12 @@ except ImportError:
 def read_csv(path):
     if not path.exists():
         return []
-    with path.open(newline="") as f:
-        return list(csv.DictReader(f))
+    try:
+        with path.open(newline="", errors="ignore") as f:
+            return list(csv.DictReader(f))
+    except Exception as exc:
+        print("[WARN] Could not read CSV {}: {}".format(path, exc), file=sys.stderr)
+        return []
 
 
 def fnum(v, default=0.0):
@@ -109,8 +113,12 @@ def summarize_run(run_dir):
     cfg_path = run_dir / "config.json"
     if not cfg_path.exists():
         return None
-    with cfg_path.open() as f:
-        cfg = json.load(f)
+    try:
+        with cfg_path.open(errors="ignore") as f:
+            cfg = json.load(f)
+    except Exception as exc:
+        print("[WARN] Skipping {}: invalid config.json ({})".format(run_dir, exc), file=sys.stderr)
+        return None
 
     attack_delay = fnum(cfg.get("attack_delay"), 30)
     attack_length_raw = cfg.get("attack_length")
@@ -233,6 +241,10 @@ def main():
 
     root = Path(args.results_dir)
     out_dir = Path(args.output) if args.output else root / "summary"
+    if not root.exists():
+        print("[WARN] Results directory {} does not exist; skipping summary.".format(root), file=sys.stderr)
+        return
+
     rows = []
     for d in sorted(root.iterdir()):
         if d.is_dir():

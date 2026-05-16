@@ -70,6 +70,21 @@ def compute_stats(values):
         "count": n,
     }
 
+def boolish(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in ('true', '1', 'yes', 'on')
+
+def optional_float(value):
+    if value in (None, ''):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
 def wait_for_controller(base, timeout=30, interval=1.0):
     """Block until the controller /stats endpoint responds or timeout expires.
     Returns True if reachable, False if timed out."""
@@ -273,13 +288,14 @@ def main():
                 pir=float(status.get('packet_in_rate',stats.get('packet_in_rate',0)) or 0)
                 cpu=float(stats.get('controller_cpu_percent',0) or 0)
                 pir_samples.append(pir); cpu_samples.append(cpu); total_samples+=1
-                if bool(status.get('mitigation_active')): false_positive_count+=1
+                if boolish(status.get('mitigation_active')): false_positive_count+=1
             thr = args.threshold if args.threshold is not None else status.get('threshold_rate', stats.get('packet_in_threshold'))
             pir = float(status.get('packet_in_rate', stats.get('packet_in_rate', 0)) or 0)
+            threshold_value = optional_float(thr)
             # Record every state transition, not just the first occurrence.
-            cur_threshold = thr is not None and pir >= float(thr)
-            cur_detected = bool(status.get('attack_detected'))
-            cur_mitigated = bool(status.get('mitigation_active'))
+            cur_threshold = threshold_value is not None and pir >= threshold_value
+            cur_detected = boolish(status.get('attack_detected'))
+            cur_mitigated = boolish(status.get('mitigation_active'))
             if cur_threshold != prev_threshold_crossed:
                 ew.writerow({'event': 'threshold_crossed' if cur_threshold else 'threshold_cleared', 't': round(t,3), 'timestamp': round(now,6), 'value': pir}); ef.flush()
                 prev_threshold_crossed = cur_threshold

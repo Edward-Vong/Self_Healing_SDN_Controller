@@ -11,6 +11,7 @@ mkdir -p "$RESULTS_DIR"
 
 RUN_STARTED_AT="$(date -Iseconds)"
 STATUS_FILE="$RESULTS_DIR/last_run_status.json"
+STATUS_TEXT_FILE="$RESULTS_DIR/last_run_status.txt"
 
 if [ -f "$SWITCHES_CONF" ]; then
   # shellcheck disable=SC1090
@@ -35,6 +36,8 @@ VALID_TARGET_IP="${VALID_TARGET_IP:-10.10.2.2}"
 CONTROLLER_URL="${CONTROLLER:-http://127.0.0.1:8080}"
 CONTROLLER_IFACE_VAL="${CONTROLLER_IFACE:-eth0}"
 PROJECT_DIR_VAL="${PROJECT_DIR:-$ROOT_DIR}"
+SWITCH_MONITOR_IPS_VAL="${SWITCH_MONITOR_IPS:-}"
+OVS_SWITCHES="${OVS_SWITCHES:-}"
 
 # Experiment defaults (fast profile).
 RUN_BASELINE_CONTROL=on
@@ -87,9 +90,18 @@ write_status() {
   local status="$1"
   local code="$2"
   local message="$3"
+  local safe_stage="$CURRENT_STAGE"
+  local safe_message="$message"
+  safe_stage="${safe_stage//\\/\\\\}"
+  safe_stage="${safe_stage//\"/\\\"}"
+  safe_stage="${safe_stage//$'\n'/ }"
+  safe_message="${safe_message//\\/\\\\}"
+  safe_message="${safe_message//\"/\\\"}"
+  safe_message="${safe_message//$'\n'/ }"
   cat > "$STATUS_FILE" <<EOF_JSON
-{"status":"$status","exit_code":$code,"stage":"$CURRENT_STAGE","message":"$message","started_at":"$RUN_STARTED_AT","finished_at":"$(date -Iseconds)"}
+{"status":"$status","exit_code":$code,"stage":"$safe_stage","message":"$safe_message","started_at":"$RUN_STARTED_AT","finished_at":"$(date -Iseconds)"}
 EOF_JSON
+  printf '%s\n' "status=$status" "exit_code=$code" "stage=$CURRENT_STAGE" "message=$message" > "$STATUS_TEXT_FILE"
 }
 
 on_err() {
@@ -142,6 +154,7 @@ Options:
   --skip-baseline-control      Skip baseline collect_metrics stage
   --skip-saturation            Skip saturation finder stage
   --skip-core                  Skip core 3 comparison runs
+  --switch-monitor-ips CSV     IPs/hosts to ping for switch RTT metrics (default: config or valid+attack targets)
   --skip-sweeps                Skip rate and size sweeps
   --skip-rate-sweep            Skip only the Scapy rate sweep
   --skip-size-sweep            Skip only the Scapy packet-size sweep
@@ -180,6 +193,7 @@ while [ $# -gt 0 ]; do
     --saturation-rates) SATURATION_RATES="$2"; shift 2 ;;
     --saturation-mitigation-mode) SATURATION_MITIGATION_MODE="$2"; shift 2 ;;
     --saturation-size) SATURATION_SIZE="$2"; shift 2 ;;
+    --switch-monitor-ips) SWITCH_MONITOR_IPS_VAL="$2"; shift 2 ;;
     --threshold) THRESHOLD_OVERRIDE="$2"; THRESHOLD_SET_BY_USER=1; shift 2 ;;
     --run-baseline-control) RUN_BASELINE_CONTROL=on; shift ;;
     --skip-baseline-control) RUN_BASELINE_CONTROL=off; shift ;;
@@ -196,6 +210,10 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+if [ -z "$SWITCH_MONITOR_IPS_VAL" ]; then
+  SWITCH_MONITOR_IPS_VAL="$VALID_TARGET_IP,$VICTIM_DATA_IP"
+fi
 
 # Baseline-control derives threshold from measured traffic. If user set --threshold
 # explicitly, that value takes precedence; otherwise clear any override so baseline runs.
@@ -313,6 +331,8 @@ if [ "$REPLOT_ONLY" -eq 1 ]; then
   done
   "$PYTHON_BIN" "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
     || log_stage "[WARN] summarize_runs.py failed"
+  "$PYTHON_BIN" "$SCRIPT_DIR/plot_rate_sweep_rtt.py" "$RESULTS_DIR" \
+    || log_stage "[WARN] plot_rate_sweep_rtt.py failed"
   log_stage "[DONE] Replotted $found run(s) with trim-start=${TRIM_START}s"
   write_status "success" "0" "replot completed ($found runs)"
   exit 0
@@ -330,6 +350,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "  VICTIM=$VICTIM_HOST     VICTIM_DATA_IP=$VICTIM_DATA_IP  VALID_TARGET_IP=$VALID_TARGET_IP"
   echo "  ATTACKER_PYTHON_BIN=$ATTACKER_PYTHON_BIN"
   echo "  ATTACK_IFACE=$ATTACK_IFACE  SIZE=256  ATTACK_LENGTH=${ATTACK_LENGTH}s  DURATION=${DURATION}s"
+  echo "  SWITCH_MONITOR_IPS=$SWITCH_MONITOR_IPS_VAL"
   echo "  SCAPY_RATE=$SCAPY_RATE  HPING_RATE=$HPING_RATE  SIZE_SWEEP_RATE=$SIZE_SWEEP_RATE  SIZE_SWEEP_SIZES=$SIZE_SWEEP_SIZES"
   echo "  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
   echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE"
@@ -484,8 +505,9 @@ if [ "$RUN_SATURATION" = "on" ]; then
     --rates "$SATURATION_RATES" \
     --mitigation-mode "$SATURATION_MITIGATION_MODE" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
-    --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
+    --switch-ips "$SWITCH_MONITOR_IPS_VAL" \
     --python-bin "$ATTACKER_PYTHON_BIN" \
+    --remote-script-dir "$PROJECT_DIR_VAL/experiment_scripts" \
     || log_stage "[WARN] Saturation finder failed; continuing (non-fatal)"
 fi
 
@@ -511,7 +533,7 @@ _call_run_experiment() {
     --attack-python-bin "$ATTACKER_PYTHON_BIN" \
     --attack-target "$VICTIM_DATA_IP" \
     --valid-target "$VALID_TARGET_IP" \
-    --switch-ips "$TRUSTED_HOST,$VICTIM_HOST" \
+    --switch-ips "$SWITCH_MONITOR_IPS_VAL" \
     --controller "$CONTROLLER_URL" \
     --controller-iface "$CONTROLLER_IFACE_VAL" \
     --attack-cmd-prefix "$CMD_PREFIX_ATTACK" \
@@ -596,19 +618,18 @@ run_baseline_no_attack_once() {
 
 log_stage "[INFO] Running threshold tuning baseline (quiet period expected: about ${DURATION}s)"
 baseline_rc=0
-if ! run_baseline_no_attack_once 1 on; then
-  baseline_rc=$?
+run_baseline_no_attack_once 1 on || baseline_rc=$?
+if [ "$baseline_rc" -ne 0 ]; then
   log_stage "[WARN] baseline_no_attack attempt=1 failed with exit code $baseline_rc"
   show_run_debug_tail "baseline_no_attack"
 
   if [ "$baseline_rc" -eq 143 ] || [ "$baseline_rc" -eq 137 ]; then
     log_stage "[WARN] baseline_no_attack ended by signal-style code ($baseline_rc); retrying once with iperf disabled"
-    if ! run_baseline_no_attack_once 2 off; then
-      baseline_rc=$?
+    baseline_rc=0
+    run_baseline_no_attack_once 2 off || baseline_rc=$?
+    if [ "$baseline_rc" -ne 0 ]; then
       log_stage "[WARN] baseline_no_attack attempt=2 failed with exit code $baseline_rc"
       show_run_debug_tail "baseline_no_attack"
-    else
-      baseline_rc=0
     fi
   fi
 fi
@@ -654,6 +675,9 @@ done
 log_stage "[INFO] Generating cross-run summary"
 "$PYTHON_BIN" "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
   || log_stage "[WARN] summarize_runs.py failed; continuing (non-fatal)"
+
+"$PYTHON_BIN" "$SCRIPT_DIR/plot_rate_sweep_rtt.py" "$RESULTS_DIR" \
+  || log_stage "[WARN] plot_rate_sweep_rtt.py failed; continuing (non-fatal)"
 
 log_stage "[DONE] Full experiment suite complete"
 log_stage "[DONE] Results directory: $RESULTS_DIR"
