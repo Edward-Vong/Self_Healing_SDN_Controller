@@ -49,7 +49,6 @@ for h in "$TRUSTED_HOST" "$ATTACKER_HOST" "$VICTIM_HOST"; do
 done
 
 echo "[INFO] Checking binaries"
-if run "$ATTACKER_HOST" "which hping3 >/dev/null 2>&1"; then ok "attacker hping3"; else bad "attacker hping3 missing"; fi
 if run "$ATTACKER_HOST" "sudo -n $ATTACKER_PYTHON_BIN -c 'import scapy'" >/dev/null 2>&1; then ok "attacker scapy ($ATTACKER_PYTHON_BIN)"; else bad "attacker scapy missing for sudo $ATTACKER_PYTHON_BIN"; fi
 if run "$TRUSTED_HOST" "which iperf >/dev/null 2>&1"; then ok "trusted iperf"; else bad "trusted iperf missing"; fi
 if run "$VICTIM_HOST" "which iperf >/dev/null 2>&1"; then ok "victim iperf"; else bad "victim iperf missing"; fi

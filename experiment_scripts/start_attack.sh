@@ -8,7 +8,7 @@ TARGET=""
 TARGET_PREFIX="10.0.0."
 OUT="results/tmp"
 CMD_PREFIX=""
-METHOD="hping3"
+METHOD="scapy"
 IFACE="h2-eth0"
 REMOTE_SCRIPT_DIR=""
 # Python binary on the node where the attack actually executes.
@@ -49,15 +49,6 @@ fi
 case "$METHOD" in
   scapy)
     CMD="sudo -n '$PYTHON_BIN' '$REMOTE_SCRIPT_DIR/packetin_attack.py' --method scapy --iface '$IFACE' --rate '$RATE' --size '$SIZE' --duration '$DURATION' --target '$TARGET' --target-prefix '$TARGET_PREFIX' --log '$ATTACK_LOG'"
-    ;;
-  hping3)
-    if [ -z "$TARGET" ]; then
-      TARGET="10.0.0.3"
-    fi
-    # hping3 flood: random source IPs to increase flow diversity.
-    # --flood sends as fast as possible; RATE is kept for labels/config but does not throttle hping3.
-    # Single invocation avoids shell-quoting issues when the command is sent through SSH via eval.
-    CMD="sudo timeout '$DURATION' hping3 --udp --flood --rand-source -d '$SIZE' -p 9991 '$TARGET'"
     ;;
   udp)
     if [ -n "$TARGET" ]; then

@@ -53,7 +53,6 @@ ATTACK_DELAY=0
 ATTACK_LENGTH=60
 ATTACK_IFACE="${ATTACK_IFACE:-eth1}"
 SCAPY_RATE=1200
-HPING_RATE=10000
 SIZE_SWEEP_RATE=1200
 SIZE_SWEEP_SIZES="64,256,512"
 SATURATION_ATTACK_METHOD="scapy"
@@ -140,11 +139,10 @@ Options:
   --duration SEC               Duration for main runs (default: $DURATION)
   --attack-delay SEC           Delay before attack starts (default: $ATTACK_DELAY)
   --attack-length SEC          Attack duration inside each run (default: $ATTACK_LENGTH)
-  --hping-rate PPS             Hping label rate (default: $HPING_RATE)
   --scapy-rate PPS             Scapy PPS (default: $SCAPY_RATE)
   --size-sweep-rate PPS        Scapy PPS for packet-size sweep (default: $SIZE_SWEEP_RATE)
   --size-sweep-sizes CSV       Packet sizes for Scapy size sweep, bytes (default: $SIZE_SWEEP_SIZES)
-  --saturation-attack-method M Saturation method: hping3|scapy|udp (default: $SATURATION_ATTACK_METHOD)
+  --saturation-attack-method M Saturation method: scapy|udp (default: $SATURATION_ATTACK_METHOD)
   --saturation-step-duration S Saturation step duration seconds (default: $SATURATION_STEP_DURATION)
   --saturation-rates CSV       Saturation rates CSV, pps (default: $SATURATION_RATES)
   --saturation-mitigation-mode M  Saturation mitigation mode: keep|on|off (default: $SATURATION_MITIGATION_MODE)
@@ -184,7 +182,6 @@ while [ $# -gt 0 ]; do
     --duration) DURATION="$2"; shift 2 ;;
     --attack-delay) ATTACK_DELAY="$2"; shift 2 ;;
     --attack-length) ATTACK_LENGTH="$2"; shift 2 ;;
-    --hping-rate) HPING_RATE="$2"; shift 2 ;;
     --scapy-rate) SCAPY_RATE="$2"; shift 2 ;;
     --size-sweep-rate) SIZE_SWEEP_RATE="$2"; shift 2 ;;
     --size-sweep-sizes) SIZE_SWEEP_SIZES="$2"; shift 2 ;;
@@ -351,7 +348,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "  ATTACKER_PYTHON_BIN=$ATTACKER_PYTHON_BIN"
   echo "  ATTACK_IFACE=$ATTACK_IFACE  SIZE=256  ATTACK_LENGTH=${ATTACK_LENGTH}s  DURATION=${DURATION}s"
   echo "  SWITCH_MONITOR_IPS=$SWITCH_MONITOR_IPS_VAL"
-  echo "  SCAPY_RATE=$SCAPY_RATE  HPING_RATE=$HPING_RATE  SIZE_SWEEP_RATE=$SIZE_SWEEP_RATE  SIZE_SWEEP_SIZES=$SIZE_SWEEP_SIZES"
+  echo "  SCAPY_RATE=$SCAPY_RATE  SIZE_SWEEP_RATE=$SIZE_SWEEP_RATE  SIZE_SWEEP_SIZES=$SIZE_SWEEP_SIZES"
   echo "  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
   echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE"
   echo "  RUN_SWEEPS=$RUN_SWEEPS  RUN_RATE_SWEEP=$RUN_RATE_SWEEP  RUN_SIZE_SWEEP=$RUN_SIZE_SWEEP"
@@ -384,10 +381,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
   log_stage "[DRY-RUN] Checking scapy on attacker ($ATTACKER_HOST) with sudo $ATTACKER_PYTHON_BIN..."
   scapy_ver=$(ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "sudo -n $ATTACKER_PYTHON_BIN -c 'import scapy; print(scapy.__version__)'" 2>&1) && \
     echo "  [OK]  scapy $scapy_ver" || { echo "  [FAIL] scapy not available for sudo $ATTACKER_PYTHON_BIN on attacker (run: sudo $ATTACKER_PYTHON_BIN -m pip install scapy)" >&2; failed=$((failed+1)); }
-
-  log_stage "[DRY-RUN] Checking hping3 on attacker ($ATTACKER_HOST)..."
-  ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" 'which hping3 >/dev/null 2>&1' && \
-    echo "  [OK]  hping3" || { echo "  [FAIL] hping3 not found on attacker (run: sudo apt-get install -y hping3)" >&2; failed=$((failed+1)); }
 
   log_stage "[DRY-RUN] Checking attacker interface ($ATTACK_IFACE) exists and is usable..."
   if ssh $SSH_OPTS "$USER_NAME@$ATTACKER_HOST" "ip link show '$ATTACK_IFACE' >/dev/null 2>&1"; then
@@ -626,7 +619,7 @@ run_baseline_no_attack_once() {
   log_stage "[INFO] baseline_no_attack attempt=$attempt iperf=$iperf_mode"
   clear_remote_ovs_flows
   set +e
-  _call_run_experiment "baseline_no_attack" 0 256 on hping3 0 "$iperf_mode"
+  _call_run_experiment "baseline_no_attack" 0 256 on scapy 0 "$iperf_mode"
   local rc=${PIPESTATUS[0]}
   set -e
   return "$rc"
@@ -657,8 +650,6 @@ log_stage "[INFO] Completed threshold tuning baseline"
 
 if [ "$RUN_CORE" = "on" ]; then
   log_stage "[INFO] Running core comparison suite"
-  run_main_experiment "hping_attack_mit_off" "$HPING_RATE" off hping3 256
-  run_main_experiment "hping_attack_mit_on"  "$HPING_RATE" on  hping3 256
   run_main_experiment "scapy_attack_mit_off" "$SCAPY_RATE" off scapy  256
   run_main_experiment "scapy_attack_mit_on"  "$SCAPY_RATE" on  scapy  256
 fi
