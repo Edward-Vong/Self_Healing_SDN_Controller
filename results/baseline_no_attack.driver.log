@@ -10,3 +10,15 @@
 [2026-05-16 19:19:02] [run_experiment:baseline_no_attack] [INFO] Collector wait completed
 [2026-05-16 19:19:03] [run_experiment:baseline_no_attack] [INFO] Run completed successfully
 done: results/baseline_no_attack_20260516_191726
+[2026-05-16 22:19:15] [run_experiment:baseline_no_attack] [INFO] Starting run with PID=25212 duration=90 attack_delay=15
+[2026-05-16 22:19:15] [run_experiment:baseline_no_attack] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:19:15] [run_experiment:baseline_no_attack] [INFO] Metrics collection phase starting
+[2026-05-16 22:19:15] [run_experiment:baseline_no_attack] [INFO] Started remote iperf server helper pid=25231
+[2026-05-16 22:19:16] [run_experiment:baseline_no_attack] [INFO] Started collector pid=25237
+[2026-05-16 22:19:17] [run_experiment:baseline_no_attack] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:19:32] [run_experiment:baseline_no_attack] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:19:32] [run_experiment:baseline_no_attack] [INFO] Attack delay phase completed
+[2026-05-16 22:19:32] [run_experiment:baseline_no_attack] [INFO] No attack launched; sleeping attack window ATTACK_DURATION=0
+[2026-05-16 22:20:51] [run_experiment:baseline_no_attack] [INFO] Collector wait completed
+[2026-05-16 22:20:52] [run_experiment:baseline_no_attack] [INFO] Run completed successfully
+done: results/baseline_no_attack_20260516_221915

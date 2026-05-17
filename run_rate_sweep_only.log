@@ -1,0 +1,166 @@
+[WARN] SSH client does not support StrictHostKeyChecking=accept-new; falling back to StrictHostKeyChecking=no
+node-0.viliang-305821.sdndockerlab-pg0.apt.emulab.net
+node-1.viliang-305821.sdndockerlab-pg0.apt.emulab.net
+node-2.viliang-305821.sdndockerlab-pg0.apt.emulab.net
+[2026-05-16 22:25:49] [INFO] Verifying controller API at http://127.0.0.1:8080
+[2026-05-16 22:25:49] [INFO] OpenFlow switches connected: 4
+[2026-05-16 22:25:49] [INFO] Ensuring attacker script and config exist on attacker
+[2026-05-16 22:25:52] [INFO] Using provided threshold=300
+[2026-05-16 22:25:52] [INFO] Skipping threshold tuning baseline
+[2026-05-16 22:25:52] [INFO] Running scapy rate sweep (rates=100,200,400,800,1600,3200)
+[2026-05-16 22:25:52] [INFO] Starting run: rate_100_scapy_mit_on (duration 90s)
+[2026-05-16 22:25:52] [INFO] Resetting controller state (mode=on)
+[2026-05-16 22:25:52] [run_experiment:rate_100_scapy_mit_on] [INFO] Starting run with PID=26149 duration=90 attack_delay=15
+[2026-05-16 22:25:52] [run_experiment:rate_100_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:25:52] [run_experiment:rate_100_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 22:25:52] [run_experiment:rate_100_scapy_mit_on] [INFO] Started remote iperf server helper pid=26168
+[2026-05-16 22:25:53] [run_experiment:rate_100_scapy_mit_on] [INFO] Started collector pid=26174
+[2026-05-16 22:25:54] [run_experiment:rate_100_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:26:09] [run_experiment:rate_100_scapy_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:26:09] [run_experiment:rate_100_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 22:26:26] [run_experiment:rate_100_scapy_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 22:26:41] [run_experiment:rate_100_scapy_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 22:26:56] [run_experiment:rate_100_scapy_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 22:27:29] [run_experiment:rate_100_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-16 22:27:29] [run_experiment:rate_100_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_100_scapy_mit_on_20260516_222552
+[2026-05-16 22:27:30] [INFO] Completed run: rate_100_scapy_mit_on
+[2026-05-16 22:27:30] [INFO] Starting run: rate_200_scapy_mit_on (duration 90s)
+[2026-05-16 22:27:30] [INFO] Resetting controller state (mode=on)
+[2026-05-16 22:27:30] [run_experiment:rate_200_scapy_mit_on] [INFO] Starting run with PID=26327 duration=90 attack_delay=15
+[2026-05-16 22:27:30] [run_experiment:rate_200_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:27:30] [run_experiment:rate_200_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 22:27:30] [run_experiment:rate_200_scapy_mit_on] [INFO] Started remote iperf server helper pid=26346
+[2026-05-16 22:27:31] [run_experiment:rate_200_scapy_mit_on] [INFO] Started collector pid=26352
+[2026-05-16 22:27:32] [run_experiment:rate_200_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:27:47] [run_experiment:rate_200_scapy_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:27:47] [run_experiment:rate_200_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 22:28:04] [run_experiment:rate_200_scapy_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 22:28:19] [run_experiment:rate_200_scapy_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 22:28:34] [run_experiment:rate_200_scapy_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 22:29:07] [run_experiment:rate_200_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-16 22:29:07] [run_experiment:rate_200_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_200_scapy_mit_on_20260516_222730
+[2026-05-16 22:29:08] [INFO] Completed run: rate_200_scapy_mit_on
+[2026-05-16 22:29:08] [INFO] Starting run: rate_400_scapy_mit_on (duration 90s)
+[2026-05-16 22:29:08] [INFO] Resetting controller state (mode=on)
+[2026-05-16 22:29:08] [run_experiment:rate_400_scapy_mit_on] [INFO] Starting run with PID=26499 duration=90 attack_delay=15
+[2026-05-16 22:29:08] [run_experiment:rate_400_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:29:08] [run_experiment:rate_400_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 22:29:08] [run_experiment:rate_400_scapy_mit_on] [INFO] Started remote iperf server helper pid=26518
+[2026-05-16 22:29:09] [run_experiment:rate_400_scapy_mit_on] [INFO] Started collector pid=26524
+[2026-05-16 22:29:10] [run_experiment:rate_400_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:29:25] [run_experiment:rate_400_scapy_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:29:25] [run_experiment:rate_400_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 22:29:42] [run_experiment:rate_400_scapy_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 22:29:57] [run_experiment:rate_400_scapy_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 22:30:12] [run_experiment:rate_400_scapy_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 22:30:44] [run_experiment:rate_400_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-16 22:30:45] [run_experiment:rate_400_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_400_scapy_mit_on_20260516_222908
+[2026-05-16 22:30:46] [INFO] Completed run: rate_400_scapy_mit_on
+[2026-05-16 22:30:46] [INFO] Starting run: rate_800_scapy_mit_on (duration 90s)
+[2026-05-16 22:30:46] [INFO] Resetting controller state (mode=on)
+[2026-05-16 22:30:46] [run_experiment:rate_800_scapy_mit_on] [INFO] Starting run with PID=26678 duration=90 attack_delay=15
+[2026-05-16 22:30:46] [run_experiment:rate_800_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:30:46] [run_experiment:rate_800_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 22:30:46] [run_experiment:rate_800_scapy_mit_on] [INFO] Started remote iperf server helper pid=26697
+[2026-05-16 22:30:47] [run_experiment:rate_800_scapy_mit_on] [INFO] Started collector pid=26704
+[2026-05-16 22:30:48] [run_experiment:rate_800_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:31:03] [run_experiment:rate_800_scapy_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:31:03] [run_experiment:rate_800_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 22:31:20] [run_experiment:rate_800_scapy_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 22:31:35] [run_experiment:rate_800_scapy_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 22:31:50] [run_experiment:rate_800_scapy_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 22:32:22] [run_experiment:rate_800_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-16 22:32:23] [run_experiment:rate_800_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_800_scapy_mit_on_20260516_223046
+[2026-05-16 22:32:24] [INFO] Completed run: rate_800_scapy_mit_on
+[2026-05-16 22:32:24] [INFO] Starting run: rate_1600_scapy_mit_on (duration 90s)
+[2026-05-16 22:32:24] [INFO] Resetting controller state (mode=on)
+[2026-05-16 22:32:24] [run_experiment:rate_1600_scapy_mit_on] [INFO] Starting run with PID=26856 duration=90 attack_delay=15
+[2026-05-16 22:32:24] [run_experiment:rate_1600_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:32:24] [run_experiment:rate_1600_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 22:32:24] [run_experiment:rate_1600_scapy_mit_on] [INFO] Started remote iperf server helper pid=26875
+[2026-05-16 22:32:25] [run_experiment:rate_1600_scapy_mit_on] [INFO] Started collector pid=26883
+[2026-05-16 22:32:26] [run_experiment:rate_1600_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:32:41] [run_experiment:rate_1600_scapy_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:32:41] [run_experiment:rate_1600_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 22:32:58] [run_experiment:rate_1600_scapy_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 22:33:13] [run_experiment:rate_1600_scapy_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 22:33:28] [run_experiment:rate_1600_scapy_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 22:34:00] [run_experiment:rate_1600_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-16 22:34:01] [run_experiment:rate_1600_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_1600_scapy_mit_on_20260516_223224
+[2026-05-16 22:34:02] [INFO] Completed run: rate_1600_scapy_mit_on
+[2026-05-16 22:34:02] [INFO] Starting run: rate_3200_scapy_mit_on (duration 90s)
+[2026-05-16 22:34:02] [INFO] Resetting controller state (mode=on)
+[2026-05-16 22:34:02] [run_experiment:rate_3200_scapy_mit_on] [INFO] Starting run with PID=27030 duration=90 attack_delay=15
+[2026-05-16 22:34:02] [run_experiment:rate_3200_scapy_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 22:34:02] [run_experiment:rate_3200_scapy_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 22:34:02] [run_experiment:rate_3200_scapy_mit_on] [INFO] Started remote iperf server helper pid=27049
+[2026-05-16 22:34:03] [run_experiment:rate_3200_scapy_mit_on] [INFO] Started collector pid=27055
+[2026-05-16 22:34:04] [run_experiment:rate_3200_scapy_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 22:34:19] [run_experiment:rate_3200_scapy_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 22:34:19] [run_experiment:rate_3200_scapy_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 22:34:36] [run_experiment:rate_3200_scapy_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 22:34:51] [run_experiment:rate_3200_scapy_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 22:35:06] [run_experiment:rate_3200_scapy_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 22:35:38] [run_experiment:rate_3200_scapy_mit_on] [INFO] Collector wait completed
+[2026-05-16 22:35:39] [run_experiment:rate_3200_scapy_mit_on] [INFO] Run completed successfully
+done: results/rate_3200_scapy_mit_on_20260516_223402
+[2026-05-16 22:35:39] [INFO] Completed run: rate_3200_scapy_mit_on
+[2026-05-16 22:35:39] [INFO] Generating per-run plots
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[WARN] matplotlib not available; wrote derived CSVs only
+[2026-05-16 22:35:42] [INFO] Generating cross-run summary
+[WARN] matplotlib not available; cross-run plots will be skipped
+/users/viliang/Self_Healing_SDN_Controller/results/summary/cross_run_summary.csv
+[WARN] matplotlib is unavailable; wrote SVG fallback: /users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree1.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree2.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree3.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree4.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree6.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree40.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree50.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree60.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree70.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt_degree80.svg
+/users/viliang/Self_Healing_SDN_Controller/results/summary/rate_sweep_existing_trusted_rtt.csv
+[2026-05-16 22:35:59] [DONE] Full experiment suite complete
+[2026-05-16 22:35:59] [DONE] Results directory: /users/viliang/Self_Healing_SDN_Controller/results
+FINAL_RESULT=success
