@@ -344,6 +344,22 @@ def discover_rate_runs(results_dir):
     return sorted(runs, key=rate_from_run)
 
 
+def update_summary_outputs(summary_dir, paths):
+    manifest = summary_dir / "summary_outputs.txt"
+    existing = []
+    if manifest.exists():
+        existing = [line.strip() for line in manifest.read_text().splitlines() if line.strip()]
+
+    seen = set(existing)
+    for path in paths:
+        text = str(path)
+        if text not in seen:
+            existing.append(text)
+            seen.add(text)
+
+    manifest.write_text("\n".join(existing) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("results_dir", nargs="?", default="results")
@@ -411,6 +427,8 @@ def main():
         write_svg(svg_output, series, event_times=event_times_all)
         for degree, path in degree_svg_outputs.items():
             write_polynomial_svg(path, polynomial_series(series, degree), degree, event_times=event_times_all)
+        generated = [svg_output] + [degree_svg_outputs[degree] for degree in sorted(degree_svg_outputs)] + [csv_output]
+        update_summary_outputs(output.parent, generated)
         print("[WARN] matplotlib is unavailable; wrote SVG fallback: {}".format(svg_output), file=sys.stderr)
         print(svg_output)
         for degree in sorted(degree_svg_outputs):
@@ -445,6 +463,9 @@ def main():
             polynomial_series(series, degree),
             event_times_all,
         )
+
+    generated = [output] + [degree_outputs[degree] for degree in sorted(degree_outputs)] + [csv_output]
+    update_summary_outputs(output.parent, generated)
 
     print(output)
     for degree in sorted(degree_outputs):
