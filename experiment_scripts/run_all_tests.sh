@@ -56,6 +56,7 @@ ATTACK_DELAY="$DEFAULT_ATTACK_DELAY"
 ATTACK_LENGTH="$DEFAULT_ATTACK_LENGTH"
 ATTACK_IFACE="${ATTACK_IFACE:-$DEFAULT_CLOUDLAB_ATTACK_IFACE}"
 SCAPY_RATE="$DEFAULT_SCAPY_RATE"
+RATE_SWEEP_RATES="$DEFAULT_RATE_SWEEP_RATES"
 SIZE_SWEEP_RATE="$DEFAULT_SIZE_SWEEP_RATE"
 SIZE_SWEEP_SIZES="$DEFAULT_SIZE_SWEEP_SIZES"
 SATURATION_ATTACK_METHOD="$DEFAULT_ATTACK_METHOD"
@@ -139,6 +140,7 @@ Options:
   --attack-delay SEC           Delay before attack starts (default: $ATTACK_DELAY)
   --attack-length SEC          Attack duration inside each run (default: $ATTACK_LENGTH)
   --scapy-rate PPS             Scapy PPS (default: $SCAPY_RATE)
+  --rate-sweep-rates CSV       Scapy PPS values for rate sweep (default: $RATE_SWEEP_RATES)
   --size-sweep-rate PPS        Scapy PPS for packet-size sweep (default: $SIZE_SWEEP_RATE)
   --size-sweep-sizes CSV       Packet sizes for Scapy size sweep, bytes (default: $SIZE_SWEEP_SIZES)
   --saturation-attack-method M Saturation method: scapy|udp (default: $SATURATION_ATTACK_METHOD)
@@ -182,6 +184,7 @@ while [ $# -gt 0 ]; do
     --attack-delay) ATTACK_DELAY="$2"; shift 2 ;;
     --attack-length) ATTACK_LENGTH="$2"; shift 2 ;;
     --scapy-rate) SCAPY_RATE="$2"; shift 2 ;;
+    --rate-sweep-rates) RATE_SWEEP_RATES="$2"; shift 2 ;;
     --size-sweep-rate) SIZE_SWEEP_RATE="$2"; shift 2 ;;
     --size-sweep-sizes) SIZE_SWEEP_SIZES="$2"; shift 2 ;;
     --saturation-attack-method) SATURATION_ATTACK_METHOD="$2"; shift 2 ;;
@@ -347,7 +350,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "  ATTACKER_PYTHON_BIN=$ATTACKER_PYTHON_BIN"
   echo "  ATTACK_IFACE=$ATTACK_IFACE  SIZE=256  ATTACK_LENGTH=${ATTACK_LENGTH}s  DURATION=${DURATION}s"
   echo "  SWITCH_MONITOR_IPS=$SWITCH_MONITOR_IPS_VAL"
-  echo "  SCAPY_RATE=$SCAPY_RATE  SIZE_SWEEP_RATE=$SIZE_SWEEP_RATE  SIZE_SWEEP_SIZES=$SIZE_SWEEP_SIZES"
+  echo "  SCAPY_RATE=$SCAPY_RATE  RATE_SWEEP_RATES=$RATE_SWEEP_RATES  SIZE_SWEEP_RATE=$SIZE_SWEEP_RATE  SIZE_SWEEP_SIZES=$SIZE_SWEEP_SIZES"
   echo "  THRESHOLD=${THRESHOLD_OVERRIDE:-<derived from baseline>}"
   echo "  RUN_BASELINE_CONTROL=$RUN_BASELINE_CONTROL  RUN_SATURATION=$RUN_SATURATION  RUN_CORE=$RUN_CORE"
   echo "  RUN_SWEEPS=$RUN_SWEEPS  RUN_RATE_SWEEP=$RUN_RATE_SWEEP  RUN_SIZE_SWEEP=$RUN_SIZE_SWEEP"
@@ -654,8 +657,11 @@ if [ "$RUN_CORE" = "on" ]; then
 fi
 
 if [ "$RUN_SWEEPS" = "on" ] && [ "$RUN_RATE_SWEEP" = "on" ]; then
-  log_stage "[INFO] Running scapy rate sweep"
-  for r in 600 900 1200 1500 3000 5000 10000; do
+  log_stage "[INFO] Running scapy rate sweep (rates=${RATE_SWEEP_RATES})"
+  IFS=',' read -r -a RATE_SWEEP_ARRAY <<< "$RATE_SWEEP_RATES"
+  for r in "${RATE_SWEEP_ARRAY[@]}"; do
+    r="$(echo "$r" | tr -d '[:space:]')"
+    [ -n "$r" ] || continue
     run_main_experiment "rate_${r}_scapy_mit_on" "$r" on scapy 256
   done
 fi
