@@ -1,2 +1,0 @@
-metering_start,escalation_start,post_lockdown_start,attack_end,metering_avg_packet_in_rate,lockdown_avg_packet_in_rate,packet_in_rate_reduction_pct,metering_avg_total_pps,lockdown_avg_total_pps,total_pps_reduction_pct,lockdown_avg_escalated_ports
-19.46,19.46,22.46,63.989,180.0,183.8456,-2.1364,999.621,271.7466,72.815,0.878
