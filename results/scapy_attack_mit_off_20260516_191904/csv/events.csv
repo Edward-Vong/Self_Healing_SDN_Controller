@@ -1,0 +1,8 @@
+event,t,timestamp,value
+threshold_crossed,18.435,1778980764.051465,125.67
+attack_detected,19.493,1778980765.109886,330.0
+threshold_cleared,65.807,1778980811.423522,60.0
+attack_cleared,70.917,1778980816.533678,0.0
+valid_traffic_started,1.611,1778980745.864326598,both
+attack_started,16.723,1778980760.976153267,scapy
+attack_ended,63.979,1778980808.231903353,scapy

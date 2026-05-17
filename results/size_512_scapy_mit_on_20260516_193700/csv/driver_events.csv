@@ -1,0 +1,4 @@
+event,t,timestamp,value
+valid_traffic_started,1.605,1778981821.970314197,both
+attack_started,16.750,1778981837.115218158,scapy
+attack_ended,63.963,1778981884.328580758,scapy

@@ -1,0 +1,48 @@
+experiment_start=2026-05-16T19:37:00-06:00
+output_dir=results/size_512_scapy_mit_on_20260516_193700
+attack_method=scapy
+mitigation=on
+[2026-05-16 19:37:00] [INFO] Starting run with PID=20936 duration=90 attack_delay=15
+{
+  "result": "success",
+  "message": "counters and states reset"
+}
+{
+  "result": "success",
+  "message": "trust state cleared"
+}
+{
+  "result": "success",
+  "message": "mitigation ended",
+  "manual_mitigation": false,
+  "attack_detected": false,
+  "mitigation_start_time": null,
+  "trusted_sources": []
+}
+[2026-05-16 19:37:00] [INFO] Controller reset/config endpoints attempted
+{
+  "result": "success",
+  "mitigation_enabled": true,
+  "mitigation_active": false,
+  "manual_mitigation": false,
+  "attack_detected": false
+}
+{
+  "result": "success",
+  "message": "Packet-In threshold updated to 100"
+}
+[2026-05-16 19:37:00] [INFO] Metrics collection phase starting
+[2026-05-16 19:37:00] [INFO] Started remote iperf server helper pid=20954
+[2026-05-16 19:37:01] [INFO] Started collector pid=20960
+valid_flows_started mode=both target=10.10.10.3
+[2026-05-16 19:37:02] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 19:37:17] [INFO] attack_delay progress 15/15s
+[2026-05-16 19:37:17] [INFO] Attack delay phase completed
+attack_pid=20996 method=scapy
+[2026-05-16 19:37:34] [INFO] attack_window progress 15/45s
+[2026-05-16 19:37:49] [INFO] attack_window progress 30/45s
+[2026-05-16 19:38:04] [INFO] attack_window progress 45/45s
+[2026-05-16 19:38:36] [INFO] Collector wait completed
+cleanup_done
+experiment_end=2026-05-16T19:38:37-06:00
+[2026-05-16 19:38:37] [INFO] Run completed successfully
