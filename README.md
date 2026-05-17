@@ -20,23 +20,16 @@ cd Self_Healing_SDN_Controller
 
 ### Python Dependencies
 ```
-python3.8 -m pip install ryu
-python3.8 -m pip install scapy
-python3.8 -m pip install matplotlib
-python3.8 -m pip install webob
+python -m pip install ryu
+python -m pip install scapy
+python -m pip install matplotlib
+python -m pip install webob
 ```
 
 ### Install OpenvSwitch
 ```
 sudo apt-get update
 sudo apt-get install -y openvswitch-switch
-```
-
-## Install Traffic Tools
-```
-sudo apt-get install -y iperf
-sudo apt-get install -y hping3
-sudo apt-get install -y arping
 ```
 
 ## Topology
