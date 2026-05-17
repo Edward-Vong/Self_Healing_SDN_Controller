@@ -402,8 +402,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
   "$PYTHON_BIN" --version >/dev/null 2>&1 && \
     echo "  [OK]  $PYTHON_BIN" || { echo "  [FAIL] $PYTHON_BIN not found on controller" >&2; failed=$((failed+1)); }
 
-  log_stage "[DRY-RUN] Verifying packetin_attack.py is present (SCP check)..."
+  log_stage "[DRY-RUN] Verifying attacker script/config SCP works..."
   scp $SCP_OPTS "$TRAFFIC_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:/tmp/_packetin_preflight_test.py" >/dev/null 2>&1 && \
+    scp $SCP_OPTS "$CONFIG_FILE" "$USER_NAME@$ATTACKER_HOST:/tmp/_sdn_config_preflight_test.sh" >/dev/null 2>&1 && \
     echo "  [OK]  SCP to attacker works" || { echo "  [FAIL] SCP to $ATTACKER_HOST failed" >&2; failed=$((failed+1)); }
 
   log_stage "[DRY-RUN] Checking reachability: trusted -> victim (VALID_TARGET_IP=$VALID_TARGET_IP)..."
@@ -461,8 +462,9 @@ fi
 
 log_stage "[INFO] OpenFlow switches connected: $CONNECTED_SWITCHES"
 
-log_stage "[INFO] Ensuring packetin_attack.py exists on attacker"
+log_stage "[INFO] Ensuring attacker script and config exist on attacker"
 $SSH_ATTACKER "mkdir -p '$PROJECT_DIR_VAL/experiment_scripts/traffic'"
+scp $SCP_OPTS "$CONFIG_FILE" "$USER_NAME@$ATTACKER_HOST:$PROJECT_DIR_VAL/experiment_scripts/config.sh" >/dev/null
 scp $SCP_OPTS "$TRAFFIC_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJECT_DIR_VAL/experiment_scripts/traffic/packetin_attack.py" >/dev/null
 
 THRESHOLD="${THRESHOLD_OVERRIDE}"
@@ -627,28 +629,32 @@ run_baseline_no_attack_once() {
   return "$rc"
 }
 
-log_stage "[INFO] Running threshold tuning baseline (quiet period expected: about ${DURATION}s)"
-baseline_rc=0
-run_baseline_no_attack_once 1 on || baseline_rc=$?
-if [ "$baseline_rc" -ne 0 ]; then
-  log_stage "[WARN] baseline_no_attack attempt=1 failed with exit code $baseline_rc"
-  show_run_debug_tail "baseline_no_attack"
+if [ "$RUN_BASELINE_CONTROL" = "on" ]; then
+  log_stage "[INFO] Running threshold tuning baseline (quiet period expected: about ${DURATION}s)"
+  baseline_rc=0
+  run_baseline_no_attack_once 1 on || baseline_rc=$?
+  if [ "$baseline_rc" -ne 0 ]; then
+    log_stage "[WARN] baseline_no_attack attempt=1 failed with exit code $baseline_rc"
+    show_run_debug_tail "baseline_no_attack"
 
-  if [ "$baseline_rc" -eq 143 ] || [ "$baseline_rc" -eq 137 ]; then
-    log_stage "[WARN] baseline_no_attack ended by signal-style code ($baseline_rc); retrying once with iperf disabled"
-    baseline_rc=0
-    run_baseline_no_attack_once 2 off || baseline_rc=$?
-    if [ "$baseline_rc" -ne 0 ]; then
-      log_stage "[WARN] baseline_no_attack attempt=2 failed with exit code $baseline_rc"
-      show_run_debug_tail "baseline_no_attack"
+    if [ "$baseline_rc" -eq 143 ] || [ "$baseline_rc" -eq 137 ]; then
+      log_stage "[WARN] baseline_no_attack ended by signal-style code ($baseline_rc); retrying once with iperf disabled"
+      baseline_rc=0
+      run_baseline_no_attack_once 2 off || baseline_rc=$?
+      if [ "$baseline_rc" -ne 0 ]; then
+        log_stage "[WARN] baseline_no_attack attempt=2 failed with exit code $baseline_rc"
+        show_run_debug_tail "baseline_no_attack"
+      fi
     fi
   fi
-fi
 
-if [ "$baseline_rc" -ne 0 ]; then
-  log_stage "[WARN] baseline_no_attack failed after retries; continuing full suite with threshold=$THRESHOLD"
+  if [ "$baseline_rc" -ne 0 ]; then
+    log_stage "[WARN] baseline_no_attack failed after retries; continuing full suite with threshold=$THRESHOLD"
+  fi
+  log_stage "[INFO] Completed threshold tuning baseline"
+else
+  log_stage "[INFO] Skipping threshold tuning baseline"
 fi
-log_stage "[INFO] Completed threshold tuning baseline"
 
 if [ "$RUN_CORE" = "on" ]; then
   log_stage "[INFO] Running core comparison suite"
