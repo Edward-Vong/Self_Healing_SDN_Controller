@@ -100,11 +100,11 @@ def nearest_packet_in(t, packet_in_points):
     return best_rate
 
 
-def write_svg(output_path, series, title="Existing trusted-flow RTT across Scapy Packet-In rate sweep"):
+def write_svg(output_path, series, title="Existing trusted-flow RTT across Scapy Packet-In rate sweep", event_times=None):
     width = 1200
     height = 720
     left = 80
-    right = 230
+    right = 260
     top = 55
     bottom = 70
     plot_w = width - left - right
@@ -112,6 +112,8 @@ def write_svg(output_path, series, title="Existing trusted-flow RTT across Scapy
 
     all_points = [point for _rate, _run_dir, points in series for point in points]
     max_t = max((t for t, _rtt in all_points), default=1.0)
+    if event_times:
+        max_t = max(max_t, max(event_times.values(), default=max_t))
     max_rtt = max((rtt for _t, rtt in all_points), default=1.0)
     max_rtt = max(1.0, max_rtt * 1.10)
 
@@ -149,6 +151,16 @@ def write_svg(output_path, series, title="Existing trusted-flow RTT across Scapy
     lines.append('<text x="{}" y="{}" font-family="Arial" font-size="14" text-anchor="middle">time (s)</text>'.format(left + plot_w / 2, height - 20))
     lines.append('<text x="22" y="{}" font-family="Arial" font-size="14" text-anchor="middle" transform="rotate(-90 22,{})">RTT ms</text>'.format(top + plot_h / 2, top + plot_h / 2))
 
+    if event_times:
+        marker_legend_y = top + 15
+        for idx, name in enumerate(CANONICAL_EVENTS):
+            if name not in event_times:
+                continue
+            style = EVENT_MARKER_STYLES[name]
+            x = xscale(event_times[name])
+            lines.append('<line x1="{:.2f}" y1="{}" x2="{:.2f}" y2="{}" stroke="{}" stroke-width="2" stroke-dasharray="{}"/>'.format(x, top, x, top + plot_h, style['color'], style['dash']))
+            lines.append('<text x="{}" y="{}" font-family="Arial" font-size="12" fill="{}">{}</text>'.format(left + plot_w + 10, marker_legend_y + idx * 18, style['color'], html.escape(name)))
+
     for idx, (rate, _run_dir, points) in enumerate(series):
         color = palette[idx % len(palette)]
         path = " ".join(
@@ -165,78 +177,156 @@ def write_svg(output_path, series, title="Existing trusted-flow RTT across Scapy
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def fit_line(points):
-    if len(points) < 2:
+def fit_polynomial(points, degree=2):
+    if len(points) < degree + 1:
         return None
+
     xs = [t for t, _rtt in points]
     ys = [rtt for _t, rtt in points]
-    n = float(len(points))
-    mean_x = sum(xs) / n
-    mean_y = sum(ys) / n
-    denom = sum((x - mean_x) ** 2 for x in xs)
-    if denom == 0:
-        return None
-    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom
-    intercept = mean_y - slope * mean_x
-    return intercept, slope, mean_y
+    order = degree + 1
+
+    A = [[0.0] * order for _ in range(order)]
+    b = [0.0] * order
+    for x, y in zip(xs, ys):
+        powers = [1.0]
+        for _ in range(1, 2 * degree + 1):
+            powers.append(powers[-1] * x)
+        for i in range(order):
+            for j in range(order):
+                A[i][j] += powers[i + j]
+            b[i] += y * powers[i]
+
+    coeffs = _solve_linear_system(A, b)
+    return coeffs
 
 
-def rolling_trend(points, window=9):
-    if not points:
+def evaluate_polynomial(coeffs, x):
+    return sum(coef * (x ** idx) for idx, coef in enumerate(coeffs))
+
+EVENT_NORMALIZATION = {
+    'attack_started': 'attack_launched',
+    'metering_started': 'metering_started',
+    'lockdown_started': 'lockdown_started',
+    'escalation_started': 'lockdown_started',
+    'mitigation_active': 'lockdown_started',
+    'attack_ended': 'attack_ends',
+}
+
+EVENT_MARKER_STYLES = {
+    'attack_launched': {'color': 'red', 'dash': '4,4'},
+    'metering_started': {'color': 'purple', 'dash': '4,4'},
+    'lockdown_started': {'color': 'green', 'dash': '4,4'},
+    'attack_ends': {'color': 'blue', 'dash': '4,4'},
+}
+
+CANONICAL_EVENTS = ['attack_launched', 'metering_started', 'lockdown_started', 'attack_ends']
+
+
+def event_times(events, names):
+    times = {}
+    for e in events:
+        name = e.get('event')
+        if name in names and name not in times:
+            times[name] = fnum(e.get('t'))
+    return times
+
+
+def clean_events(events):
+    cleaned = []
+    for e in events:
+        raw_name = e.get('event')
+        normalized = EVENT_NORMALIZATION.get(raw_name)
+        if normalized is None:
+            continue
+        t = fnum(e.get('t'), None)
+        if t is None:
+            continue
+        normalized_event = dict(e)
+        normalized_event['event'] = normalized
+        normalized_event['t'] = t
+        cleaned.append(normalized_event)
+    return cleaned
+
+
+def load_events(run_dir):
+    path = resolve(run_dir, 'csv', 'events.csv')
+    if not path.exists():
+        path = run_dir / 'events.csv'
+    if not path.exists():
         return []
-    if window < 3:
-        window = 3
-    if window % 2 == 0:
-        window += 1
-    half = window // 2
-    smoothed = []
-    for i, (t, _rtt) in enumerate(points):
-        start = max(0, i - half)
-        end = min(len(points), i + half + 1)
-        vals = [rtt for _t, rtt in points[start:end]]
-        smoothed.append((t, statistics.median(vals)))
-    return smoothed
+    return clean_events(read_csv(path))
 
 
-def best_fit_series(series):
+def combined_event_times(series):
+    times = {}
+    for _rate, run_dir, _points in series:
+        for e in load_events(run_dir):
+            name = e['event']
+            if name not in times or e['t'] < times[name]:
+                times[name] = e['t']
+    return times
+
+
+def draw_transition_markers(ax, event_times):
+    drawn = set()
+    for name in CANONICAL_EVENTS:
+        if name not in event_times:
+            continue
+        style = EVENT_MARKER_STYLES[name]
+        label = name if name not in drawn else None
+        ax.axvline(event_times[name], color=style['color'], linestyle='--', linewidth=1.6, alpha=0.75, label=label)
+        drawn.add(name)
+
+
+def polynomial_series(series, degree=2):
     fitted = []
     for rate, run_dir, points in series:
-        fit = fit_line(points)
-        if fit is None:
+        coeffs = fit_polynomial(points, degree=degree)
+        if coeffs is None:
             continue
-        intercept, slope, mean_rtt = fit
         min_t = min(t for t, _rtt in points)
         max_t = max(t for t, _rtt in points)
-        fitted_points = [
-            (min_t, intercept + slope * min_t),
-            (max_t, intercept + slope * max_t),
-        ]
-        fitted.append((rate, run_dir, fitted_points, intercept, slope, mean_rtt))
+        if max_t == min_t:
+            xs = [min_t, min_t + 1.0]
+        else:
+            xs = [min_t + i * (max_t - min_t) / 100.0 for i in range(101)]
+        fitted_points = [(x, evaluate_polynomial(coeffs, x)) for x in xs]
+        fitted.append((rate, run_dir, fitted_points))
     return fitted
 
 
-def rolling_trend_series(series, window=9):
-    trends = []
-    for rate, run_dir, points in series:
-        trend_points = rolling_trend(points, window=window)
-        if len(trend_points) >= 2:
-            trends.append((rate, run_dir, trend_points))
-    return trends
+def write_polynomial_svg(output_path, series, degree, event_times=None):
+    title = "Existing trusted-flow RTT degree {} polynomial fit across rate sweep".format(degree)
+    write_svg(output_path, series, title=title, event_times=event_times)
 
 
-def write_best_fit_svg(output_path, fitted):
-    if not fitted:
-        return
-    svg_series = [(rate, run_dir, points) for rate, run_dir, points, _intercept, _slope, _mean_rtt in fitted]
-    write_svg(output_path, svg_series, title="Best-fit RTT trends for existing trusted flow across rate sweep")
-
-
-def write_rolling_trend_svg(output_path, trends, window):
-    write_svg(
-        output_path,
-        trends,
-        title="Rolling median RTT trend for existing trusted flow ({} samples)".format(window),
-    )
+def _solve_linear_system(A, b):
+    n = len(A)
+    if n == 0:
+        return None
+    M = [row[:] for row in A]
+    v = b[:]
+    for i in range(n):
+        pivot = i
+        for j in range(i + 1, n):
+            if abs(M[j][i]) > abs(M[pivot][i]):
+                pivot = j
+        if abs(M[pivot][i]) < 1e-12:
+            return None
+        M[i], M[pivot] = M[pivot], M[i]
+        v[i], v[pivot] = v[pivot], v[i]
+        pivot_val = M[i][i]
+        for j in range(i, n):
+            M[i][j] /= pivot_val
+        v[i] /= pivot_val
+        for k in range(n):
+            if k == i:
+                continue
+            factor = M[k][i]
+            for j in range(i, n):
+                M[k][j] -= factor * M[i][j]
+            v[k] -= factor * v[i]
+    return v
 
 
 def discover_rate_runs(results_dir):
@@ -272,12 +362,19 @@ def main():
     output = Path(args.output) if args.output else results_dir / "summary" / "rate_sweep_existing_trusted_rtt.png"
     csv_output = Path(args.csv_output) if args.csv_output else output.with_suffix(".csv")
     svg_output = output.with_suffix(".svg")
-    fit_output = output.with_name(output.stem + "_best_fit" + output.suffix)
-    fit_svg_output = fit_output.with_suffix(".svg")
-    fit_csv_output = output.with_name(output.stem + "_best_fit.csv")
-    trend_output = output.with_name(output.stem + "_rolling_trend" + output.suffix)
-    trend_svg_output = trend_output.with_suffix(".svg")
-    trend_csv_output = output.with_name(output.stem + "_rolling_trend.csv")
+    degree_outputs = {
+        1: output.with_name(output.stem + "_degree1" + output.suffix),
+        2: output.with_name(output.stem + "_degree2" + output.suffix),
+        3: output.with_name(output.stem + "_degree3" + output.suffix),
+        4: output.with_name(output.stem + "_degree4" + output.suffix),
+        6: output.with_name(output.stem + "_degree6" + output.suffix),
+        40: output.with_name(output.stem + "_degree40" + output.suffix),
+        50: output.with_name(output.stem + "_degree50" + output.suffix),
+        60: output.with_name(output.stem + "_degree60" + output.suffix),
+        70: output.with_name(output.stem + "_degree70" + output.suffix),
+        80: output.with_name(output.stem + "_degree80" + output.suffix),
+    }
+    degree_svg_outputs = {degree: path.with_suffix(".svg") for degree, path in degree_outputs.items()}
     output.parent.mkdir(parents=True, exist_ok=True)
 
     series = []
@@ -308,96 +405,51 @@ def main():
         writer.writeheader()
         writer.writerows(combined_rows)
 
-    fitted = best_fit_series(series)
-    trends = rolling_trend_series(series, window=args.smooth_window)
-    with fit_csv_output.open("w", newline="") as f:
-        fields = [
-            "run",
-            "configured_attack_rate_pps",
-            "avg_existing_trusted_rtt_ms",
-            "best_fit_intercept_ms",
-            "best_fit_slope_ms_per_sec",
-        ]
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for rate, run_dir, _points, intercept, slope, mean_rtt in fitted:
-            writer.writerow({
-                "run": run_dir.name,
-                "configured_attack_rate_pps": rate,
-                "avg_existing_trusted_rtt_ms": round(mean_rtt, 4),
-                "best_fit_intercept_ms": round(intercept, 6),
-                "best_fit_slope_ms_per_sec": round(slope, 6),
-            })
-
-    with trend_csv_output.open("w", newline="") as f:
-        fields = ["run", "configured_attack_rate_pps", "t", "rolling_median_rtt_ms"]
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for rate, run_dir, points in trends:
-            for t, rtt in points:
-                writer.writerow({
-                    "run": run_dir.name,
-                    "configured_attack_rate_pps": rate,
-                    "t": round(t, 3),
-                    "rolling_median_rtt_ms": round(rtt, 4),
-                })
+    event_times_all = combined_event_times(series)
 
     if not _HAS_MPL:
-        write_svg(svg_output, series)
-        write_rolling_trend_svg(trend_svg_output, trends, args.smooth_window)
-        write_best_fit_svg(fit_svg_output, fitted)
+        write_svg(svg_output, series, event_times=event_times_all)
+        for degree, path in degree_svg_outputs.items():
+            write_polynomial_svg(path, polynomial_series(series, degree), degree, event_times=event_times_all)
         print("[WARN] matplotlib is unavailable; wrote SVG fallback: {}".format(svg_output), file=sys.stderr)
         print(svg_output)
-        print(trend_svg_output)
+        for degree in sorted(degree_svg_outputs):
+            print(degree_svg_outputs[degree])
         print(csv_output)
-        print(trend_csv_output)
-        print(fit_csv_output)
         return
 
-    plt.figure(figsize=(14, 7))
-    for rate, _run_dir, points in series:
-        xs = [t for t, _ in points]
-        ys = [rtt for _, rtt in points]
-        matching_pi = [r["packet_in_rate"] for r in combined_rows if r["configured_attack_rate_pps"] == rate and r["packet_in_rate"] != ""]
-        if matching_pi:
-            label = "{} pps (avg PI {:.1f}/s)".format(rate, sum(matching_pi) / len(matching_pi))
-        else:
+    def plot_series(output_path, title, pairs, event_times):
+        plt.figure(figsize=(14, 7))
+        for rate, _run_dir, points in pairs:
+            xs = [t for t, _ in points]
+            ys = [rtt for _, rtt in points]
             label = "{} pps".format(rate)
-        plt.plot(xs, ys, linewidth=1.8, label=label)
+            plt.plot(xs, ys, linewidth=1.8, label=label)
+        draw_transition_markers(plt.gca(), event_times)
+        plt.xlabel("time (s)")
+        plt.ylabel("RTT ms")
+        plt.title(title)
+        plt.grid(True, alpha=0.35)
+        if args.max_rtt_ms > 0:
+            plt.ylim(bottom=0, top=args.max_rtt_ms)
+        plt.legend(title="attack rate", loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0)
+        plt.tight_layout(rect=[0, 0, 0.82, 1])
+        plt.savefig(output_path)
+        plt.close()
 
-    plt.xlabel("time (s)")
-    plt.ylabel("RTT ms")
-    plt.title("Existing trusted-flow RTT across Scapy Packet-In rate sweep")
-    plt.grid(True, alpha=0.35)
-    if args.max_rtt_ms > 0:
-        plt.ylim(bottom=0, top=args.max_rtt_ms)
-    plt.legend(title="attack rate", loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0)
-    plt.tight_layout(rect=[0, 0, 0.82, 1])
-    plt.savefig(output)
-    plt.close()
-
-    plt.figure(figsize=(14, 7))
-    for rate, _run_dir, points in trends:
-        xs = [t for t, _ in points]
-        ys = [rtt for _, rtt in points]
-        avg_rtt = sum(ys) / len(ys)
-        label = "{} pps trend (avg {:.2f} ms)".format(rate, avg_rtt)
-        plt.plot(xs, ys, linewidth=2.4, label=label)
-
-    plt.xlabel("time (s)")
-    plt.ylabel("rolling median RTT ms")
-    plt.title("Rolling median RTT trends for existing trusted flow across rate sweep")
-    plt.grid(True, alpha=0.35)
-    plt.legend(title="attack rate", loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0)
-    plt.tight_layout(rect=[0, 0, 0.78, 1])
-    plt.savefig(trend_output)
-    plt.close()
+    plot_series(output, "Existing trusted-flow RTT across Scapy Packet-In rate sweep", series, event_times_all)
+    for degree in (1, 2, 3, 4, 6, 40, 50, 60, 70, 80):
+        plot_series(
+            degree_outputs[degree],
+            "Existing trusted-flow RTT degree {} polynomial fit across rate sweep".format(degree),
+            polynomial_series(series, degree),
+            event_times_all,
+        )
 
     print(output)
-    print(trend_output)
+    for degree in sorted(degree_outputs):
+        print(degree_outputs[degree])
     print(csv_output)
-    print(trend_csv_output)
-    print(fit_csv_output)
 
 
 if __name__ == "__main__":

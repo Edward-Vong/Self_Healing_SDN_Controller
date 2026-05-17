@@ -28,69 +28,133 @@ def event_times(events, names):
             times[name] = num(e, "t")
     return times
 
-KNOWN_EVENTS = set([
-    'valid_traffic_started',
-    'attack_started',
-    'attack_ended',
-    'threshold_crossed',
-    'threshold_cleared',
-    'attack_detected',
-    'attack_cleared',
-    'mitigation_active',
-    'mitigation_ended',
-    'metering_started',
-    'metering_cleared',
-    'escalation_started',
-    'escalation_cleared',
-    'node_saturated',
-    'node_recovered',
-    'collector_error',
-])
+EVENT_NORMALIZATION = {
+    'attack_started': 'attack_launched',
+    'metering_started': 'metering_started',
+    'lockdown_started': 'lockdown_started',
+    'escalation_started': 'lockdown_started',
+    'mitigation_active': 'lockdown_started',
+    'attack_ended': 'attack_ends',
+}
+
+KNOWN_EVENTS = set(EVENT_NORMALIZATION.keys())
+CANONICAL_EVENTS = ['attack_launched', 'metering_started', 'lockdown_started', 'attack_ends']
+EVENT_STYLES = {
+    'attack_launched': {'color': 'red', 'label': 'attack_launched'},
+    'metering_started': {'color': 'purple', 'label': 'metering_started'},
+    'lockdown_started': {'color': 'green', 'label': 'lockdown_started'},
+    'attack_ends': {'color': 'blue', 'label': 'attack_ends'},
+}
 
 def clean_events(events):
     cleaned = []
     for e in events:
-        if e.get('event') not in KNOWN_EVENTS:
+        raw_name = e.get('event')
+        normalized = EVENT_NORMALIZATION.get(raw_name)
+        if normalized is None:
             continue
         try:
             float(e.get('t', ''))
         except Exception:
             continue
-        cleaned.append(e)
+        normalized_event = dict(e)
+        normalized_event['event'] = normalized
+        cleaned.append(normalized_event)
     return cleaned
 
 
-def add_transition_markers(events):
-    styles = {
-        'threshold_crossed': {'color': 'red', 'label': 'threshold_crossed'},
-        'attack_detected': {'color': 'orange', 'label': 'attack_detected'},
-        'mitigation_active': {'color': 'green', 'label': 'mitigation_active'},
-        'attack_ended': {'color': 'blue', 'label': 'attack_ended'},
-        'metering_started': {'color': 'purple', 'label': 'metering_started'},
-        'metering_cleared': {'color': 'purple', 'label': 'metering_cleared'},
-        'escalation_started': {'color': 'brown', 'label': 'escalation_started'},
-        'escalation_cleared': {'color': 'brown', 'label': 'escalation_cleared'},
-    }
+def add_transition_markers(ax, events, fallback=None):
     drawn = set()
-    for e in events:
-        name = e.get('event')
-        if name not in styles:
-            continue
-        style = styles[name]
-        label = style['label'] if name not in drawn else None
-        plt.axvline(num(e, 't'), color=style['color'], label=label)
-        drawn.add(name)
+    marker_handles = []
+    for name in CANONICAL_EVENTS:
+        style = EVENT_STYLES[name]
+        for e in events:
+            if e.get('event') != name:
+                continue
+            line = ax.axvline(num(e, 't'), color=style['color'], linestyle='--', linewidth=1.5, alpha=0.85, label=name)
+            marker_handles.append((line, name))
+            drawn.add(name)
+            break
+    if fallback:
+        for name, fallback_time in fallback.items():
+            if name in drawn or fallback_time is None:
+                continue
+            style = EVENT_STYLES.get(name)
+            if not style:
+                continue
+            line = ax.axvline(fallback_time, color=style['color'], linestyle='--', linewidth=1.5, alpha=0.85, label=name)
+            marker_handles.append((line, name))
+            drawn.add(name)
+    return marker_handles
+
 
 def place_legend(outside=False):
-    """Place the legend inside the plot in the corner with the lowest data density."""
+    """Place the main legend for plot data and a separate legend for transition markers."""
     ax = plt.gca()
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
 
-    loc = _choose_legend_location(ax)
-    ax.legend(loc=loc, framealpha=0.85, edgecolor='black', fancybox=True)
+    data_handles = []
+    data_labels = []
+    marker_handles = []
+    marker_labels = []
+    for handle, label in zip(handles, labels):
+        if label in CANONICAL_EVENTS:
+            marker_handles.append(handle)
+            marker_labels.append(label)
+        else:
+            data_handles.append(handle)
+            data_labels.append(label)
+
+    if data_handles:
+        data_handles, data_labels = _sort_legend_handles_labels(data_handles, data_labels)
+        loc = _choose_legend_location(ax)
+        data_legend = ax.legend(data_handles, data_labels, loc=loc, framealpha=0.85, edgecolor='black', fancybox=True)
+        ax.add_artist(data_legend)
+
+    if marker_handles:
+        marker_loc = 'upper left' if not outside else 'center left'
+        legend_kwargs = {
+            'loc': marker_loc,
+            'title': 'events',
+            'framealpha': 0.85,
+            'edgecolor': 'black',
+            'fancybox': True,
+        }
+        if outside:
+            legend_kwargs['bbox_to_anchor'] = (1.02, 0.5)
+        ax.legend(marker_handles, marker_labels, **legend_kwargs)
+
     plt.tight_layout()
+
+
+def _sort_legend_handles_labels(handles, labels):
+    ordered = []
+    others = []
+    for idx, (handle, label) in enumerate(zip(handles, labels)):
+        xdata = None
+        if hasattr(handle, 'get_xdata'):
+            try:
+                xdata = handle.get_xdata()
+            except Exception:
+                xdata = None
+        is_vertical = False
+        if xdata is not None and len(xdata) >= 2:
+            try:
+                is_vertical = all(abs(float(x) - float(xdata[0])) < 1e-9 for x in xdata)
+            except Exception:
+                is_vertical = False
+        if is_vertical:
+            ordered.append((float(xdata[0]), idx, handle, label))
+        else:
+            others.append((idx, handle, label))
+
+    others.sort(key=lambda item: item[0])
+    ordered.sort(key=lambda item: item[0])
+    sorted_handles = [handle for _idx, handle, _label in others] + [handle for _x, _idx, handle, _label in ordered]
+    sorted_labels = [label for _idx, _handle, label in others] + [label for _x, _idx, _handle, label in ordered]
+    return sorted_handles, sorted_labels
 
 
 def _choose_legend_location(ax):
@@ -221,10 +285,10 @@ def pct_reduction(before, after):
 
 
 def write_lockdown_summary(run_dir, events, status_plot, link_plot, mit_plot):
-    ev_times = event_times(events, ['metering_started', 'escalation_started', 'attack_ended'])
-    metering_start = ev_times.get('metering_started') or ev_times.get('mitigation_active')
-    escalation_start = ev_times.get('escalation_started')
-    attack_end = ev_times.get('attack_ended')
+    ev_times = event_times(events, ['metering_started', 'lockdown_started', 'attack_ends'])
+    metering_start = ev_times.get('metering_started') or ev_times.get('lockdown_started')
+    escalation_start = ev_times.get('lockdown_started')
+    attack_end = ev_times.get('attack_ends')
     if metering_start is None or escalation_start is None:
         return None
 
@@ -265,55 +329,6 @@ def write_lockdown_summary(run_dir, events, status_plot, link_plot, mit_plot):
         w.writeheader()
         w.writerow({k: '' if v is None else round(v, 4) if isinstance(v, float) else v for k, v in summary.items()})
     return summary
-
-
-def best_fit_series(series, degree=2):
-    fitted = []
-    for rate, run_dir, points in series:
-        coeffs = fit_polynomial(points, degree=degree)
-        if coeffs is None:
-            continue
-        min_t = min(t for t, _rtt in points)
-        max_t = max(t for t, _rtt in points)
-        if max_t == min_t:
-            fitted_points = [(min_t, evaluate_polynomial(coeffs, min_t))]
-        else:
-            step = (max_t - min_t) / 50.0
-            fitted_points = [
-                (min_t + i * step, evaluate_polynomial(coeffs, min_t + i * step))
-                for i in range(51)
-            ]
-        mean_rtt = sum(rtt for _t, rtt in points) / len(points)
-        fitted.append((rate, run_dir, fitted_points, coeffs, mean_rtt))
-    return fitted
-
-
-def fit_polynomial(points, degree=2):
-    if len(points) < degree + 1:
-        return None
-
-    xs = [t for t, _rtt in points]
-    ys = [rtt for _t, rtt in points]
-    order = degree + 1
-
-    # Build normal equations for polynomial regression.
-    A = [[0.0] * order for _ in range(order)]
-    b = [0.0] * order
-    for x, y in zip(xs, ys):
-        powers = [1.0]
-        for _ in range(1, 2 * degree + 1):
-            powers.append(powers[-1] * x)
-        for i in range(order):
-            for j in range(order):
-                A[i][j] += powers[i + j]
-            b[i] += y * powers[i]
-
-    coeffs = _solve_linear_system(A, b)
-    return coeffs
-
-
-def evaluate_polynomial(coeffs, x):
-    return sum(coef * (x ** idx) for idx, coef in enumerate(coeffs))
 
 
 def _solve_linear_system(A, b):
@@ -387,7 +402,8 @@ def main():
         plt.plot(xs,ys,label='Packet-In rate')
         thr=[num(r,'threshold_rate') for r in status_plot if r.get('threshold_rate') not in ('',None)]
         if thr: plt.axhline(thr[0], label='Threshold')
-        add_transition_markers(events)
+        ax = plt.gca()
+        add_transition_markers(ax, events)
 
         mitigation_inactive_time = None
         for i in range(len(status_plot)-1):
@@ -412,7 +428,8 @@ def main():
         ys = [num(r, 'controller_cpu_percent') for r in metrics_plot]
 
         plt.plot(xs, ys, label='CPU %')
-        add_transition_markers(events)
+        ax = plt.gca()
+        add_transition_markers(ax, events)
 
         mitigation_inactive_time = None
         if status_plot:
@@ -460,6 +477,8 @@ def main():
         plt.plot(xs, unknown_rates, label='unknown source drops/sec')
         plt.plot(xs, overrate_rates, label='over-rate drops/sec')
 
+        ax = plt.gca()
+        add_transition_markers(ax, events)
         _smart_ylim(mitigated_rates + unknown_rates + overrate_rates)
         plt.xlabel('time (seconds)')
         plt.ylabel('drops/sec')
@@ -539,7 +558,8 @@ def main():
             ylabel='Mbits per second'
             title='Controller link utilization over time (legacy)'
 
-        add_transition_markers(events)
+        ax = plt.gca()
+        add_transition_markers(ax, events)
         _smart_ylim(all_vals)
         plt.xlabel('time (seconds)')
         plt.ylabel(ylabel)
@@ -552,9 +572,9 @@ def main():
 
     if status_plot and mit_plot:
         summary = write_lockdown_summary(d, events, status_plot, link_plot, mit_plot)
-        ev_times = event_times(events, ['metering_started', 'mitigation_active', 'escalation_started', 'attack_ended'])
-        metering_start = ev_times.get('metering_started') or ev_times.get('mitigation_active')
-        escalation_start = ev_times.get('escalation_started')
+        ev_times = event_times(events, ['metering_started', 'lockdown_started', 'attack_ends'])
+        metering_start = ev_times.get('metering_started') or ev_times.get('lockdown_started')
+        escalation_start = ev_times.get('lockdown_started')
         if metering_start is not None and escalation_start is not None:
             fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
 
@@ -583,12 +603,12 @@ def main():
             axes[2].set_xlabel('time (seconds)')
             axes[2].grid(True, alpha=0.35)
 
-            attack_end = ev_times.get('attack_ended')
+            attack_end = ev_times.get('attack_ends')
             window_end = attack_end if attack_end is not None else max(status_x or mit_x)
             for ax in axes:
+                add_transition_markers(ax, events)
                 ax.axvspan(metering_start, escalation_start, color='tab:purple', alpha=0.08, label='metering window')
                 ax.axvspan(escalation_start, window_end, color='tab:brown', alpha=0.10, label='lockdown window')
-                ax.axvline(escalation_start, color='tab:brown', label='lockdown starts')
 
             if summary:
                 pir_drop = summary.get('packet_in_rate_reduction_pct')
@@ -607,12 +627,8 @@ def main():
                     )
 
             for ax in axes:
-                handles, labels = ax.get_legend_handles_labels()
-                if handles:
-                    uniq = {}
-                    for h, l in zip(handles, labels):
-                        uniq.setdefault(l, h)
-                    ax.legend(uniq.values(), uniq.keys(), loc='upper right')
+                plt.sca(ax)
+                place_legend()
 
             plt.tight_layout()
             path = os.path.join(out, 'lockdown_impact_summary.png')
@@ -635,6 +651,7 @@ def main():
 
     plt.figure(figsize=(14, 6))
     has_ping = False
+    ping_series = []
 
     for name, offset in [('ping_existing', 0), ('ping_new', valid_new_delay)]:
         log = _log(d, '{}.log'.format(name))
@@ -663,14 +680,13 @@ def main():
             # Trim the warm-up window from the plot (CSV keeps full data).
             rows_plot = [r for r in rows if r['t'] >= trim]
             label = 'existing trusted flow' if name == 'ping_existing' else 'new trusted flow'
-            plt.plot([r['t'] for r in rows_plot], [r['rtt_ms'] for r in rows_plot], label=label)
+            color = 'tab:blue' if name == 'ping_existing' else 'tab:orange'
+            plt.plot([r['t'] for r in rows_plot], [r['rtt_ms'] for r in rows_plot], label=label, color=color)
+            ping_series.append((label, rows_plot, color))
 
     if has_ping:
-        plt.axvline(attack_delay, label='attack starts')
-
-        ev_times = event_times(events, ['mitigation_active'])
-        if 'mitigation_active' in ev_times:
-            plt.axvline(ev_times['mitigation_active'],label='mitigation starts', color='green')
+        ax = plt.gca()
+        add_transition_markers(ax, events, fallback={'attack_launched': attack_delay})
 
         mitigation_inactive_time = None
         if status_plot:
@@ -696,7 +712,7 @@ def main():
         fig.set_size_inches(14, 6)
         plt.tight_layout()
 
-        path = os.path.join(out, 'legitimate_rtt_combined.png')
+        path = os.path.join(out, 'legitimate_rtt_combined_raw.png')
         plt.savefig(path)
         plt.close()
         made.append(path)
@@ -757,11 +773,8 @@ def main():
         plt.plot([r['t'] for r in rows_plot], [r['mbps'] for r in rows_plot], label=label)
 
     if has_iperf:
-        plt.axvline(attack_delay, label='attack starts', color='green')
-        ev_times = event_times(events, ['mitigation_active'])
-        if 'mitigation_active' in ev_times:
-            plt.axvline(ev_times['mitigation_active'], label='mitigation starts', color='purple')
         ax = plt.gca()
+        add_transition_markers(ax, events, fallback={'attack_launched': attack_delay})
         iperf_flat = [v for line in ax.get_lines() for v in line.get_ydata()]
         _smart_ylim(iperf_flat)
         plt.xlabel('time (seconds)')
@@ -785,9 +798,8 @@ def main():
         plt.plot(xs, rate_limited, label='rate-limited ports', marker='o')
         plt.plot(xs, escalated, label='escalated (drop) ports', marker='s')
         
-        ev_times=event_times(events, ['mitigation_active'])
-        if 'mitigation_active' in ev_times:
-            plt.axvline(ev_times['mitigation_active'], color='green', alpha=0.5, label='mitigation starts')
+        ax = plt.gca()
+        add_transition_markers(ax, events)
         
         plt.xlabel('time (seconds)')
         plt.ylabel('number of ports')
@@ -800,14 +812,14 @@ def main():
         made.append(path)
 
     if events:
-        order=['threshold_crossed','attack_detected','mitigation_active']
+        order=['attack_launched','metering_started','lockdown_started','attack_ends']
         evs=[e for e in events if e.get('event') in order]
         if evs:
             plt.figure(figsize=(10, 6))
             plt.scatter([num(e,'t') for e in evs],[order.index(e.get('event')) for e in evs], s=100)
             plt.yticks(range(len(order)), order)
             plt.xlabel('time (seconds)')
-            plt.title('Detection and response timeline')
+            plt.title('Attack launch and mitigation response timeline')
             plt.grid(True, alpha=0.3)
             # Set y-axis limits with padding to zoom in on the metrics
             plt.ylim(-0.5, len(order) - 0.5)
