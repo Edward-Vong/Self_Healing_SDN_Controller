@@ -1,4 +1,0 @@
-event,t,timestamp,value
-valid_traffic_started,1.657,1778935376.686399650,both
-attack_started,16.770,1778935391.799019203,scapy
-attack_ended,64.125,1778935439.154371107,scapy

@@ -1,28 +1,14 @@
-[2026-05-16 03:34:34] [run_experiment:scapy_attack_mit_on] [INFO] Starting run with PID=27152 duration=75 attack_delay=0
-[2026-05-16 03:34:34] [run_experiment:scapy_attack_mit_on] [INFO] Controller reset/config endpoints attempted
-[2026-05-16 03:34:34] [run_experiment:scapy_attack_mit_on] [INFO] Metrics collection phase starting
-[2026-05-16 03:34:34] [run_experiment:scapy_attack_mit_on] [INFO] Started remote iperf server helper pid=27170
-[2026-05-16 03:34:36] [run_experiment:scapy_attack_mit_on] [INFO] Started collector pid=27176
-[2026-05-16 03:34:36] [run_experiment:scapy_attack_mit_on] [INFO] Valid traffic launched (mode=both)
-[2026-05-16 03:34:36] [run_experiment:scapy_attack_mit_on] [INFO] Attack delay phase completed
-[2026-05-16 03:34:51] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 15/60s
-[2026-05-16 03:35:06] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 30/60s
-[2026-05-16 03:35:21] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 45/60s
-[2026-05-16 03:35:36] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 60/60s
-[2026-05-16 03:35:51] [run_experiment:scapy_attack_mit_on] [INFO] Collector wait completed
-[2026-05-16 03:35:52] [run_experiment:scapy_attack_mit_on] [INFO] Run completed successfully
-done: results/scapy_attack_mit_on_20260516_033434
-[2026-05-16 06:44:13] [run_experiment:scapy_attack_mit_on] [INFO] Starting run with PID=31105 duration=75 attack_delay=15
-[2026-05-16 06:44:13] [run_experiment:scapy_attack_mit_on] [INFO] Controller reset/config endpoints attempted
-[2026-05-16 06:44:13] [run_experiment:scapy_attack_mit_on] [INFO] Metrics collection phase starting
-[2026-05-16 06:44:13] [run_experiment:scapy_attack_mit_on] [INFO] Started remote iperf server helper pid=31123
-[2026-05-16 06:44:14] [run_experiment:scapy_attack_mit_on] [INFO] Started collector pid=31129
-[2026-05-16 06:44:15] [run_experiment:scapy_attack_mit_on] [INFO] Valid traffic launched (mode=both)
-[2026-05-16 06:44:30] [run_experiment:scapy_attack_mit_on] [INFO] attack_delay progress 15/15s
-[2026-05-16 06:44:30] [run_experiment:scapy_attack_mit_on] [INFO] Attack delay phase completed
-[2026-05-16 06:44:47] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 15/45s
-[2026-05-16 06:45:02] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 30/45s
-[2026-05-16 06:45:17] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 45/45s
-[2026-05-16 06:45:30] [run_experiment:scapy_attack_mit_on] [INFO] Collector wait completed
-[2026-05-16 06:45:31] [run_experiment:scapy_attack_mit_on] [INFO] Run completed successfully
-done: results/scapy_attack_mit_on_20260516_064413
+[2026-05-16 19:20:41] [run_experiment:scapy_attack_mit_on] [INFO] Starting run with PID=19314 duration=90 attack_delay=15
+[2026-05-16 19:20:42] [run_experiment:scapy_attack_mit_on] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 19:20:42] [run_experiment:scapy_attack_mit_on] [INFO] Metrics collection phase starting
+[2026-05-16 19:20:42] [run_experiment:scapy_attack_mit_on] [INFO] Started remote iperf server helper pid=19332
+[2026-05-16 19:20:43] [run_experiment:scapy_attack_mit_on] [INFO] Started collector pid=19338
+[2026-05-16 19:20:43] [run_experiment:scapy_attack_mit_on] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 19:20:58] [run_experiment:scapy_attack_mit_on] [INFO] attack_delay progress 15/15s
+[2026-05-16 19:20:58] [run_experiment:scapy_attack_mit_on] [INFO] Attack delay phase completed
+[2026-05-16 19:21:16] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 15/45s
+[2026-05-16 19:21:31] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 30/45s
+[2026-05-16 19:21:46] [run_experiment:scapy_attack_mit_on] [INFO] attack_window progress 45/45s
+[2026-05-16 19:22:18] [run_experiment:scapy_attack_mit_on] [INFO] Collector wait completed
+[2026-05-16 19:22:19] [run_experiment:scapy_attack_mit_on] [INFO] Run completed successfully
+done: results/scapy_attack_mit_on_20260516_192041

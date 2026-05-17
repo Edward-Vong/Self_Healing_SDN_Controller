@@ -1,0 +1,46 @@
+experiment_start=2026-05-16T19:17:26-06:00
+output_dir=results/baseline_no_attack_20260516_191726
+attack_method=scapy
+mitigation=on
+[2026-05-16 19:17:26] [INFO] Starting run with PID=19001 duration=90 attack_delay=15
+{
+  "result": "success",
+  "message": "counters and states reset"
+}
+{
+  "result": "success",
+  "message": "trust state cleared"
+}
+{
+  "result": "success",
+  "message": "mitigation ended",
+  "manual_mitigation": false,
+  "attack_detected": false,
+  "mitigation_start_time": null,
+  "trusted_sources": []
+}
+[2026-05-16 19:17:26] [INFO] Controller reset/config endpoints attempted
+{
+  "result": "success",
+  "mitigation_enabled": true,
+  "mitigation_active": false,
+  "manual_mitigation": false,
+  "attack_detected": false
+}
+{
+  "result": "success",
+  "message": "Packet-In threshold updated to 100"
+}
+[2026-05-16 19:17:26] [INFO] Metrics collection phase starting
+[2026-05-16 19:17:26] [INFO] Started remote iperf server helper pid=19019
+[2026-05-16 19:17:27] [INFO] Started collector pid=19025
+valid_flows_started mode=both target=10.10.10.3
+[2026-05-16 19:17:28] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 19:17:43] [INFO] attack_delay progress 15/15s
+[2026-05-16 19:17:43] [INFO] Attack delay phase completed
+[INFO] No attack launched because rate=0 or attack duration=0
+[2026-05-16 19:17:43] [INFO] No attack launched; sleeping attack window ATTACK_DURATION=0
+[2026-05-16 19:19:02] [INFO] Collector wait completed
+cleanup_done
+experiment_end=2026-05-16T19:19:03-06:00
+[2026-05-16 19:19:03] [INFO] Run completed successfully

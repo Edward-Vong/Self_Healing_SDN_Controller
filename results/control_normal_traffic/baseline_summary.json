@@ -7,10 +7,10 @@
     "count": 89
   },
   "controller_cpu_percent": {
-    "mean": 0.9362,
-    "min": 0.23,
-    "max": 1.07,
-    "stddev": 0.1078,
+    "mean": 1.1311,
+    "min": 0.8,
+    "max": 1.38,
+    "stddev": 0.1328,
     "count": 89
   },
   "false_positive_detections": 0,

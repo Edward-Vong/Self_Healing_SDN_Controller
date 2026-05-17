@@ -401,8 +401,13 @@ def main():
         ys=[num(r,'packet_in_rate') for r in status_plot]
         plt.plot(xs,ys,label='Packet-In rate')
         thr=[num(r,'threshold_rate') for r in status_plot if r.get('threshold_rate') not in ('',None)]
-        if thr: plt.axhline(thr[0], label='Threshold')
         ax = plt.gca()
+        if thr:
+            try:
+                thr_val = float(thr[0])
+                ax.axhline(thr_val, color='black', linestyle=':', linewidth=1.6, label='Threshold')
+            except Exception:
+                pass
         add_transition_markers(ax, events)
 
         mitigation_inactive_time = None
@@ -584,6 +589,14 @@ def main():
             axes[0].set_ylabel('Packet-In/s')
             axes[0].set_title('Lockdown impact: controller pressure before and after escalation')
             axes[0].grid(True, alpha=0.35)
+
+            # draw threshold on Packet-In axis if present
+            thr = [num(r,'threshold_rate') for r in status_plot if r.get('threshold_rate') not in ('',None)]
+            if thr:
+                try:
+                    axes[0].axhline(float(thr[0]), color='black', linestyle=':', linewidth=1.6, label='Threshold')
+                except Exception:
+                    pass
 
             if link_plot:
                 link_x = [num(r, 't') for r in link_plot]

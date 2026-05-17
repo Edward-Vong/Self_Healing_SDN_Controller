@@ -1,0 +1,5 @@
+event,t,timestamp,value
+80647.86797,10.10.10.1:loss=100.0%
+node_saturated,0.01,1778980647.86797,10.10.10.2:loss=100.0%
+node_saturated,0.01,1778980647.86797,10.10.10.3:loss=100.0%
+valid_traffic_started,1.610,1778980648.103223922,both

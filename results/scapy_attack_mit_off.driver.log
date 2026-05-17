@@ -1,28 +1,14 @@
-[2026-05-16 03:33:15] [run_experiment:scapy_attack_mit_off] [INFO] Starting run with PID=26970 duration=75 attack_delay=0
-[2026-05-16 03:33:15] [run_experiment:scapy_attack_mit_off] [INFO] Controller reset/config endpoints attempted
-[2026-05-16 03:33:16] [run_experiment:scapy_attack_mit_off] [INFO] Metrics collection phase starting
-[2026-05-16 03:33:16] [run_experiment:scapy_attack_mit_off] [INFO] Started remote iperf server helper pid=26988
-[2026-05-16 03:33:17] [run_experiment:scapy_attack_mit_off] [INFO] Started collector pid=26994
-[2026-05-16 03:33:17] [run_experiment:scapy_attack_mit_off] [INFO] Valid traffic launched (mode=both)
-[2026-05-16 03:33:17] [run_experiment:scapy_attack_mit_off] [INFO] Attack delay phase completed
-[2026-05-16 03:33:32] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 15/60s
-[2026-05-16 03:33:47] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 30/60s
-[2026-05-16 03:34:02] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 45/60s
-[2026-05-16 03:34:17] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 60/60s
-[2026-05-16 03:34:33] [run_experiment:scapy_attack_mit_off] [INFO] Collector wait completed
-[2026-05-16 03:34:33] [run_experiment:scapy_attack_mit_off] [INFO] Run completed successfully
-done: results/scapy_attack_mit_off_20260516_033315
-[2026-05-16 06:42:54] [run_experiment:scapy_attack_mit_off] [INFO] Starting run with PID=30928 duration=75 attack_delay=15
-[2026-05-16 06:42:54] [run_experiment:scapy_attack_mit_off] [INFO] Controller reset/config endpoints attempted
-[2026-05-16 06:42:55] [run_experiment:scapy_attack_mit_off] [INFO] Metrics collection phase starting
-[2026-05-16 06:42:55] [run_experiment:scapy_attack_mit_off] [INFO] Started remote iperf server helper pid=30946
-[2026-05-16 06:42:56] [run_experiment:scapy_attack_mit_off] [INFO] Started collector pid=30952
-[2026-05-16 06:42:56] [run_experiment:scapy_attack_mit_off] [INFO] Valid traffic launched (mode=both)
-[2026-05-16 06:43:11] [run_experiment:scapy_attack_mit_off] [INFO] attack_delay progress 15/15s
-[2026-05-16 06:43:11] [run_experiment:scapy_attack_mit_off] [INFO] Attack delay phase completed
-[2026-05-16 06:43:29] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 15/45s
-[2026-05-16 06:43:44] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 30/45s
-[2026-05-16 06:43:59] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 45/45s
-[2026-05-16 06:44:11] [run_experiment:scapy_attack_mit_off] [INFO] Collector wait completed
-[2026-05-16 06:44:12] [run_experiment:scapy_attack_mit_off] [INFO] Run completed successfully
-done: results/scapy_attack_mit_off_20260516_064254
+[2026-05-16 19:19:04] [run_experiment:scapy_attack_mit_off] [INFO] Starting run with PID=19146 duration=90 attack_delay=15
+[2026-05-16 19:19:04] [run_experiment:scapy_attack_mit_off] [INFO] Controller reset/config endpoints attempted
+[2026-05-16 19:19:04] [run_experiment:scapy_attack_mit_off] [INFO] Metrics collection phase starting
+[2026-05-16 19:19:04] [run_experiment:scapy_attack_mit_off] [INFO] Started remote iperf server helper pid=19164
+[2026-05-16 19:19:05] [run_experiment:scapy_attack_mit_off] [INFO] Started collector pid=19170
+[2026-05-16 19:19:05] [run_experiment:scapy_attack_mit_off] [INFO] Valid traffic launched (mode=both)
+[2026-05-16 19:19:20] [run_experiment:scapy_attack_mit_off] [INFO] attack_delay progress 15/15s
+[2026-05-16 19:19:20] [run_experiment:scapy_attack_mit_off] [INFO] Attack delay phase completed
+[2026-05-16 19:19:38] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 15/45s
+[2026-05-16 19:19:53] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 30/45s
+[2026-05-16 19:20:08] [run_experiment:scapy_attack_mit_off] [INFO] attack_window progress 45/45s
+[2026-05-16 19:20:40] [run_experiment:scapy_attack_mit_off] [INFO] Collector wait completed
+[2026-05-16 19:20:41] [run_experiment:scapy_attack_mit_off] [INFO] Run completed successfully
+done: results/scapy_attack_mit_off_20260516_191904

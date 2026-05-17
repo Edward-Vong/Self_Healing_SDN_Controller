@@ -1,0 +1,8 @@
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\packetin_rate_detection.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\cpu_over_time.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\mitigation_drops_over_time.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\mitigation_effectiveness_bar.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\controller_link_util_over_time.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\legitimate_rtt_combined_raw.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\trusted_throughput_combined.png
+C:\Users\vicki\Documents\GitHub\Self_Healing_SDN_Controller\results\baseline_no_attack_20260516_191726\plots\mitigation_port_escalation.png

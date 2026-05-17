@@ -1,4 +1,0 @@
-event,t,timestamp,value
-valid_traffic_started,1.596,1778935218.763365414,both
-attack_started,16.729,1778935233.895848427,hping3
-attack_ended,64.041,1778935281.207869260,hping3

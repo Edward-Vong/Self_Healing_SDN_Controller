@@ -1,5 +1,12 @@
 Run from the controller node at the repository root.
 
+Setup Check:
+```
+bash experiment_scripts/run_all_tests.sh \
+  --dry-run \
+  --controller http://127.0.0.1:8080
+```
+
 This runs the full experiment suite using the topology values in
 experiment_scripts/switches.conf. Each experiment run lasts 75 seconds:
 
@@ -9,16 +16,59 @@ experiment_scripts/switches.conf. Each experiment run lasts 75 seconds:
 
 ```bash
 bash experiment_scripts/run_all_tests.sh \
-  --duration 75 \
+  --controller http://127.0.0.1:8080 \
+  --duration 90 \
   --attack-delay 15 \
   --attack-length 45 \
   --clear-ovs off \
-  2>&1 | tee run_all_75s.log
+  2>&1 | tee run_full.log
 ```
 
 After it finishes, check:
 
-```bash
+```
+bash
 cat results/last_run_status.txt
 tail -n 80 run_all_75s.log
 ```
+
+
+Quick validation:
+
+```
+bash experiment_scripts/run_all_tests.sh \
+  --controller http://127.0.0.1:8080 \
+  --duration 75 \
+  --attack-delay 15 \
+  --attack-length 45 \
+  --skip-saturation \
+  --skip-size-sweep \
+  --skip-rate-sweep \
+  --clear-ovs off \
+  2>&1 | tee run_short.log
+```
+
+Sweep-only:
+```
+bash experiment_scripts/run_all_tests.sh \
+  --controller http://127.0.0.1:8080 \
+  --duration 90 \
+  --attack-delay 15 \
+  --attack-length 45 \
+  --skip-core \
+  --skip-baseline-control \
+  --clear-ovs off \
+  2>&1 | tee run_sweeps_only.log
+```
+
+
+```
+bash experiment_scripts/run_all_tests.sh \
+  --skip-saturation \
+  --skip-size-sweep \
+  --skip-rate-sweep
+```
+
+scp -o StrictHostKeyChecking=no -r `
+viliang@128.110.97.128:~/Self_Healing_SDN_Controller/results `
+.\results2
