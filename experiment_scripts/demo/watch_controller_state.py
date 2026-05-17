@@ -1,11 +1,38 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
+import shlex
 import sys
 import time
 from datetime import datetime
 from urllib.error import URLError, HTTPError
 from urllib.request import urlopen
+
+
+def load_config():
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.sh")
+    config = {}
+    with open(config_path, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            parts = shlex.split(line, comments=True, posix=True)
+            if parts and "=" in parts[0]:
+                key, value = parts[0].split("=", 1)
+                if key.startswith("DEFAULT_"):
+                    config[key] = value
+    return config
+
+
+CONFIG = load_config()
+DEFAULT_CONTROLLER_URL = CONFIG["DEFAULT_CONTROLLER_URL"]
+DEFAULT_HOLD_DURATION_SECONDS = float(CONFIG["DEFAULT_HOLD_DURATION_SECONDS"])
+DEFAULT_POLL_INTERVAL_SECONDS = float(CONFIG["DEFAULT_POLL_INTERVAL_SECONDS"])
+DEFAULT_RATE_TOLERANCE = float(CONFIG["DEFAULT_RATE_TOLERANCE"])
+DEFAULT_REACH_TIMEOUT_SECONDS = float(CONFIG["DEFAULT_REACH_TIMEOUT_SECONDS"])
+DEFAULT_WATCH_DURATION_SECONDS = float(CONFIG["DEFAULT_WATCH_DURATION_SECONDS"])
 
 
 EXPECTED_LIFECYCLE_VERSION = "phase-machine-v2"
@@ -50,15 +77,15 @@ def as_switch_set(switches_payload):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Verbose controller state watcher for demo/presentation")
-    p.add_argument("--controller", default="http://127.0.0.1:8080", help="Controller REST base URL")
-    p.add_argument("--interval", type=float, default=1.0, help="Polling interval in seconds")
-    p.add_argument("--duration", type=float, default=90.0, help="Total watch duration in seconds")
+    p.add_argument("--controller", default=DEFAULT_CONTROLLER_URL, help="Controller REST base URL")
+    p.add_argument("--interval", type=float, default=DEFAULT_POLL_INTERVAL_SECONDS, help="Polling interval in seconds")
+    p.add_argument("--duration", type=float, default=DEFAULT_WATCH_DURATION_SECONDS, help="Total watch duration in seconds")
     p.add_argument("--log", default="", help="Optional file path to mirror output")
     p.add_argument("--mode", choices=["verbose", "flat"], default="verbose", help="Output style")
     p.add_argument("--target-pps", type=float, default=0.0, help="Expected flat attack rate in pps")
-    p.add_argument("--rate-tolerance", type=float, default=0.95, help="Required fraction of target pps")
-    p.add_argument("--hold-duration", type=float, default=10.0, help="Seconds that measured rate must stay above required")
-    p.add_argument("--reach-timeout", type=float, default=30.0, help="Max seconds to reach and hold target")
+    p.add_argument("--rate-tolerance", type=float, default=DEFAULT_RATE_TOLERANCE, help="Required fraction of target pps")
+    p.add_argument("--hold-duration", type=float, default=DEFAULT_HOLD_DURATION_SECONDS, help="Seconds that measured rate must stay above required")
+    p.add_argument("--reach-timeout", type=float, default=DEFAULT_REACH_TIMEOUT_SECONDS, help="Max seconds to reach and hold target")
     return p.parse_args()
 
 

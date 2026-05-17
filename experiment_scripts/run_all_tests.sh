@@ -3,7 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
+ANALYSIS_DIR="$SCRIPT_DIR/analysis"
+METRICS_DIR="$SCRIPT_DIR/metrics"
+TRAFFIC_DIR="$SCRIPT_DIR/traffic"
+CONFIG_FILE="$SCRIPT_DIR/config.sh"
 CURRENT_STAGE="startup"
 
 RESULTS_DIR="$ROOT_DIR/results"
@@ -13,9 +16,9 @@ RUN_STARTED_AT="$(date -Iseconds)"
 STATUS_FILE="$RESULTS_DIR/last_run_status.json"
 STATUS_TEXT_FILE="$RESULTS_DIR/last_run_status.txt"
 
-if [ -f "$SWITCHES_CONF" ]; then
+if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1090
-  . "$SWITCHES_CONF"
+  . "$CONFIG_FILE"
 fi
 
 # Management-plane SSH endpoints.
@@ -28,13 +31,13 @@ VICTIM_HOST="${VICTIM:-}"
 # VICTIM_DATA_IP   = victim's IP reachable from the attacker (attack target, 10.10.3.x).
 # VALID_TARGET_IP  = victim's IP reachable from the trusted node (ping/iperf target, 10.10.2.x).
 # These differ because the CloudLab topology uses point-to-point /24 subnets per pair.
-TRUSTED_DATA_IP="${TRUSTED_DATA_IP:-10.10.2.1}"
-ATTACKER_DATA_IP="${ATTACKER_DATA_IP:-10.10.3.1}"
-VICTIM_DATA_IP="${VICTIM_DATA_IP:-10.10.3.2}"
-VALID_TARGET_IP="${VALID_TARGET_IP:-10.10.2.2}"
+TRUSTED_DATA_IP="${TRUSTED_DATA_IP:-$DEFAULT_TRUSTED_DATA_IP}"
+ATTACKER_DATA_IP="${ATTACKER_DATA_IP:-$DEFAULT_ATTACKER_DATA_IP}"
+VICTIM_DATA_IP="${VICTIM_DATA_IP:-$DEFAULT_VICTIM_DATA_IP}"
+VALID_TARGET_IP="${VALID_TARGET_IP:-$DEFAULT_VALID_TARGET_IP}"
 
-CONTROLLER_URL="${CONTROLLER:-http://127.0.0.1:8080}"
-CONTROLLER_IFACE_VAL="${CONTROLLER_IFACE:-eth0}"
+CONTROLLER_URL="${CONTROLLER:-$DEFAULT_CONTROLLER_URL}"
+CONTROLLER_IFACE_VAL="${CONTROLLER_IFACE:-$DEFAULT_CONTROLLER_IFACE}"
 PROJECT_DIR_VAL="${PROJECT_DIR:-$ROOT_DIR}"
 SWITCH_MONITOR_IPS_VAL="${SWITCH_MONITOR_IPS:-}"
 OVS_SWITCHES="${OVS_SWITCHES:-}"
@@ -48,34 +51,30 @@ RUN_RATE_SWEEP=on
 RUN_SIZE_SWEEP=on
 CLEAR_OVS_MODE="off"
 
-DURATION=75
-ATTACK_DELAY=15
-ATTACK_LENGTH=45
-ATTACK_IFACE="${ATTACK_IFACE:-eth1}"
-SCAPY_RATE=3000
-SIZE_SWEEP_RATE=1200
-SIZE_SWEEP_SIZES="64,256,512"
-SATURATION_ATTACK_METHOD="scapy"
-SATURATION_STEP_DURATION=25
-SATURATION_RATES="100 200 400 800 1600 3200"
+DURATION="$DEFAULT_FAST_EXPERIMENT_DURATION"
+ATTACK_DELAY="$DEFAULT_ATTACK_DELAY"
+ATTACK_LENGTH="$DEFAULT_ATTACK_LENGTH"
+ATTACK_IFACE="${ATTACK_IFACE:-$DEFAULT_CLOUDLAB_ATTACK_IFACE}"
+SCAPY_RATE="$DEFAULT_SCAPY_RATE"
+SIZE_SWEEP_RATE="$DEFAULT_SIZE_SWEEP_RATE"
+SIZE_SWEEP_SIZES="$DEFAULT_SIZE_SWEEP_SIZES"
+SATURATION_ATTACK_METHOD="$DEFAULT_ATTACK_METHOD"
+SATURATION_STEP_DURATION="$DEFAULT_SATURATION_STEP_DURATION"
+SATURATION_RATES="$DEFAULT_SATURATION_RATES"
 SATURATION_MITIGATION_MODE="off"
-SATURATION_SIZE=256
+SATURATION_SIZE="$DEFAULT_SATURATION_PACKET_SIZE"
 THRESHOLD_OVERRIDE=""
 THRESHOLD_SET_BY_USER=0
 FAILED_RUNS=""
-TRIM_START=5        # seconds of topology-learning warmup to exclude from plots
+TRIM_START="$DEFAULT_TRIM_START"        # seconds of topology-learning warmup to exclude from plots
 REPLOT_ONLY=0       # set to 1 via --replot to regenerate plots without re-running experiments
 DRY_RUN=0           # set to 1 via --dry-run to validate config/connectivity only
 PYTHON_BIN="${PYTHON_BIN:-}"
-ATTACKER_PYTHON_BIN="${ATTACKER_PYTHON_BIN:-python3.8}"
+ATTACKER_PYTHON_BIN="${ATTACKER_PYTHON_BIN:-$DEFAULT_ATTACKER_PYTHON_BIN}"
 
 if [ -z "$PYTHON_BIN" ]; then
-  if command -v python3.8 >/dev/null 2>&1; then
-    PYTHON_BIN="python3.8"
-  elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="python3"
-  else
-    echo "[ERROR] No Python interpreter found (python3.8/python3)" >&2
+  if ! PYTHON_BIN="$(select_python_bin)"; then
+    echo "[ERROR] No supported Python interpreter found" >&2
     exit 2
   fi
 fi
@@ -124,7 +123,7 @@ Runs the full CloudLab experiment suite and generates all result plots.
 
 Options:
   --controller URL             Controller REST URL (default: $CONTROLLER_URL)
-  --user USER                  SSH username (default from switches.conf)
+  --user USER                  SSH username (default from config.sh)
   --trusted-host HOST          Trusted node SSH host/IP
   --attacker-host HOST         Attacker node SSH host/IP
   --victim-host HOST           Victim node SSH host/IP
@@ -132,7 +131,7 @@ Options:
   --attacker-data-ip IP        Attacker dataplane IP (default: $ATTACKER_DATA_IP)
   --victim-data-ip IP          Victim attack-target IP  (attacker→victim subnet, default: $VICTIM_DATA_IP)
   --valid-target-ip IP         Victim valid-traffic IP  (trusted→victim subnet, default: $VALID_TARGET_IP)
-  --project-dir DIR            Repo path on remote nodes (default from switches.conf or local)
+  --project-dir DIR            Repo path on remote nodes (default from config.sh or local)
   --controller-iface IFACE     Controller interface for utilization metrics
   --attack-iface IFACE         Attacker egress iface for scapy (default: $ATTACK_IFACE)
   --attacker-python-bin BIN    Python executable on attacker (default: $ATTACKER_PYTHON_BIN)
@@ -315,7 +314,7 @@ clear_remote_ovs_flows() {
 }
 
 # --replot: regenerate all plots and summary from existing results, then exit.
-# No SSH, no experiments — just re-runs plot_results.py and summarize_runs.py.
+# No SSH, no experiments - just re-runs plot_results.py and summarize_runs.py.
 if [ "$REPLOT_ONLY" -eq 1 ]; then
   log_stage "[INFO] --replot mode: regenerating plots from existing results in $RESULTS_DIR"
   found=0
@@ -323,12 +322,12 @@ if [ "$REPLOT_ONLY" -eq 1 ]; then
     [ -d "$d" ] || continue
     [ -f "$d/config.json" ] || continue
     found=$((found+1))
-    "$PYTHON_BIN" "$SCRIPT_DIR/plot_results.py" "$d" --trim-start "$TRIM_START" \
+    "$PYTHON_BIN" "$ANALYSIS_DIR/plot_results.py" "$d" --trim-start "$TRIM_START" \
       || log_stage "[WARN] plot_results.py failed for $d"
   done
-  "$PYTHON_BIN" "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
+  "$PYTHON_BIN" "$ANALYSIS_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
     || log_stage "[WARN] summarize_runs.py failed"
-  "$PYTHON_BIN" "$SCRIPT_DIR/plot_rate_sweep_rtt.py" "$RESULTS_DIR" \
+  "$PYTHON_BIN" "$ANALYSIS_DIR/plot_rate_sweep_rtt.py" "$RESULTS_DIR" \
     || log_stage "[WARN] plot_rate_sweep_rtt.py failed"
   log_stage "[DONE] Replotted $found run(s) with trim-start=${TRIM_START}s"
   write_status "success" "0" "replot completed ($found runs)"
@@ -392,7 +391,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     fi
   else
     echo "  [FAIL] attacker interface $ATTACK_IFACE does not exist" >&2
-    echo "         Hint: pass --attack-iface eth1 (or set ATTACK_IFACE in switches.conf)" >&2
+    echo "         Hint: pass --attack-iface eth1 (or update DEFAULT_CLOUDLAB_ATTACK_IFACE in config.sh)" >&2
     failed=$((failed+1))
   fi
 
@@ -401,7 +400,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "  [OK]  $PYTHON_BIN" || { echo "  [FAIL] $PYTHON_BIN not found on controller" >&2; failed=$((failed+1)); }
 
   log_stage "[DRY-RUN] Verifying packetin_attack.py is present (SCP check)..."
-  scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:/tmp/_packetin_preflight_test.py" >/dev/null 2>&1 && \
+  scp $SCP_OPTS "$TRAFFIC_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:/tmp/_packetin_preflight_test.py" >/dev/null 2>&1 && \
     echo "  [OK]  SCP to attacker works" || { echo "  [FAIL] SCP to $ATTACKER_HOST failed" >&2; failed=$((failed+1)); }
 
   log_stage "[DRY-RUN] Checking reachability: trusted -> victim (VALID_TARGET_IP=$VALID_TARGET_IP)..."
@@ -460,8 +459,8 @@ fi
 log_stage "[INFO] OpenFlow switches connected: $CONNECTED_SWITCHES"
 
 log_stage "[INFO] Ensuring packetin_attack.py exists on attacker"
-$SSH_ATTACKER "mkdir -p '$PROJECT_DIR_VAL/experiment_scripts'"
-scp $SCP_OPTS "$SCRIPT_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJECT_DIR_VAL/experiment_scripts/packetin_attack.py" >/dev/null
+$SSH_ATTACKER "mkdir -p '$PROJECT_DIR_VAL/experiment_scripts/traffic'"
+scp $SCP_OPTS "$TRAFFIC_DIR/packetin_attack.py" "$USER_NAME@$ATTACKER_HOST:$PROJECT_DIR_VAL/experiment_scripts/traffic/packetin_attack.py" >/dev/null
 
 THRESHOLD="${THRESHOLD_OVERRIDE}"
 
@@ -472,7 +471,7 @@ if [ "$RUN_BASELINE_CONTROL" = "on" ] && [ -z "$THRESHOLD" ]; then
   $SSH_TRUSTED "nohup ping -i 0.5 -w 90 '$VALID_TARGET_IP' >/tmp/ping_control.log 2>&1 < /dev/null &"
   $SSH_TRUSTED "nohup iperf -c '$VALID_TARGET_IP' -t 90 >/tmp/iperf_control.log 2>&1 < /dev/null &"
 
-  "$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" \
+  "$PYTHON_BIN" "$METRICS_DIR/collect_metrics.py" \
     --duration 90 \
     --out "$RESULTS_DIR/control_normal_traffic" \
     --controller "$CONTROLLER_URL" \
@@ -499,7 +498,7 @@ fi
 if [ "$RUN_SATURATION" = "on" ]; then
   reset_controller_state "$SATURATION_MITIGATION_MODE"
   log_stage "[INFO] Running saturation finder"
-  "$PYTHON_BIN" "$SCRIPT_DIR/saturation_finder.py" \
+  "$PYTHON_BIN" "$METRICS_DIR/saturation_finder.py" \
     --controller "$CONTROLLER_URL" \
     --out "$RESULTS_DIR/saturation_analysis" \
     --target "$VICTIM_DATA_IP" \
@@ -516,7 +515,7 @@ if [ "$RUN_SATURATION" = "on" ]; then
     --controller-iface "$CONTROLLER_IFACE_VAL" \
     --switch-ips "$SWITCH_MONITOR_IPS_VAL" \
     --python-bin "$ATTACKER_PYTHON_BIN" \
-    --remote-script-dir "$PROJECT_DIR_VAL/experiment_scripts" \
+    --remote-script-dir "$PROJECT_DIR_VAL/experiment_scripts/traffic" \
     || log_stage "[WARN] Saturation finder failed; continuing (non-fatal)"
 fi
 
@@ -675,15 +674,15 @@ log_stage "[INFO] Generating per-run plots"
 for d in "$RESULTS_DIR"/*; do
   [ -d "$d" ] || continue
   [ -f "$d/config.json" ] || continue
-  "$PYTHON_BIN" "$SCRIPT_DIR/plot_results.py" "$d" --trim-start "$TRIM_START" \
+  "$PYTHON_BIN" "$ANALYSIS_DIR/plot_results.py" "$d" --trim-start "$TRIM_START" \
     || log_stage "[WARN] plot_results.py failed for $d; continuing (non-fatal)"
 done
 
 log_stage "[INFO] Generating cross-run summary"
-"$PYTHON_BIN" "$SCRIPT_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
+"$PYTHON_BIN" "$ANALYSIS_DIR/summarize_runs.py" "$RESULTS_DIR" --output "$RESULTS_DIR/summary" \
   || log_stage "[WARN] summarize_runs.py failed; continuing (non-fatal)"
 
-"$PYTHON_BIN" "$SCRIPT_DIR/plot_rate_sweep_rtt.py" "$RESULTS_DIR" \
+"$PYTHON_BIN" "$ANALYSIS_DIR/plot_rate_sweep_rtt.py" "$RESULTS_DIR" \
   || log_stage "[WARN] plot_rate_sweep_rtt.py failed; continuing (non-fatal)"
 
 log_stage "[DONE] Full experiment suite complete"

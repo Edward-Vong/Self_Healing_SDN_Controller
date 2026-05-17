@@ -7,8 +7,8 @@ bash experiment_scripts/run_all_tests.sh \
   --controller http://127.0.0.1:8080
 ```
 
-This runs the full experiment suite using the topology values in
-experiment_scripts/switches.conf. Each experiment run lasts 75 seconds:
+This runs the full experiment suite using the values in
+experiment_scripts/config.sh. Each experiment run lasts 75 seconds:
 
 - 15 seconds of normal traffic before the attack starts
 - 45 seconds of attack traffic

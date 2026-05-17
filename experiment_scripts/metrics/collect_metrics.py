@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-import argparse, csv, json, math, os, time, urllib.request, urllib.error, subprocess, re, threading
+import argparse, csv, json, math, os, shlex, time, urllib.request, urllib.error, subprocess, re, threading
+
+
+def load_config():
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.sh")
+    config = {}
+    with open(config_path, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            parts = shlex.split(line, comments=True, posix=True)
+            if parts and "=" in parts[0]:
+                key, value = parts[0].split("=", 1)
+                if key.startswith("DEFAULT_"):
+                    config[key] = value
+    return config
+
+
+DEFAULT_CONTROLLER_URL = load_config()["DEFAULT_CONTROLLER_URL"]
 
 def get_json(base, path):
     url = base.rstrip('/') + path
@@ -215,7 +234,7 @@ def main():
     p.add_argument('--duration', type=float, required=True)
     p.add_argument('--interval', type=float, default=1.0)
     p.add_argument('--out', required=True)
-    p.add_argument('--controller', default='http://127.0.0.1:8080')
+    p.add_argument('--controller', default=DEFAULT_CONTROLLER_URL)
     p.add_argument('--iface', default='', help='Interface connected toward controller, e.g. s1-ethX or eth1')
     p.add_argument('--threshold', type=float, default=None)
     p.add_argument('--baseline', action='store_true', help='Compute baseline statistics and write baseline_summary.json')

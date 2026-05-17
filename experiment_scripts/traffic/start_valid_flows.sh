@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
-TARGET="10.0.0.3"
-DURATION=30
-INTERVAL=0.5
-SIZE=56
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="$(cd "$SCRIPT_DIR/.." && pwd)/config.sh"
+
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+fi
+
+TARGET="$DEFAULT_MININET_VALID_TARGET"
+DURATION="$DEFAULT_VALID_FLOW_DURATION"
+INTERVAL="$DEFAULT_VALID_FLOW_INTERVAL"
+SIZE="$DEFAULT_VALID_FLOW_PACKET_SIZE"
 OUT="results/tmp"
 MODE="both"
-NEW_DELAY=10
+NEW_DELAY="$DEFAULT_VALID_FLOW_NEW_DELAY"
 CMD_PREFIX=""
 IPERF=off
 while [ $# -gt 0 ]; do

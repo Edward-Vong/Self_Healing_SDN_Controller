@@ -14,9 +14,40 @@ Methods:
 
 import argparse
 import csv
+import os
 import random
+import shlex
 import socket
 import time
+
+
+def load_config():
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.sh")
+    config = {}
+    with open(config_path, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            parts = shlex.split(line, comments=True, posix=True)
+            if parts and "=" in parts[0]:
+                key, value = parts[0].split("=", 1)
+                if key.startswith("DEFAULT_"):
+                    config[key] = value
+    return config
+
+
+CONFIG = load_config()
+DEFAULT_ATTACK_DURATION_SECONDS = float(CONFIG["DEFAULT_PACKETIN_ATTACK_DURATION"])
+DEFAULT_ATTACK_LOG = CONFIG["DEFAULT_ATTACK_LOG"]
+DEFAULT_ATTACK_METHOD = CONFIG["DEFAULT_ATTACK_METHOD"]
+DEFAULT_ATTACK_RATE_PPS = float(CONFIG["DEFAULT_ATTACK_RATE"])
+DEFAULT_ATTACK_TARGET_PREFIX = CONFIG["DEFAULT_ATTACK_TARGET_PREFIX"]
+DEFAULT_BURST_SIZE = int(CONFIG["DEFAULT_BURST_SIZE"])
+DEFAULT_MININET_ATTACK_IFACE = CONFIG["DEFAULT_MININET_ATTACK_IFACE"]
+DEFAULT_PACKET_SIZE_BYTES = int(CONFIG["DEFAULT_PACKET_SIZE"])
+DEFAULT_RANDOM_HOST_END = int(CONFIG["DEFAULT_RANDOM_HOST_END"])
+DEFAULT_RANDOM_HOST_START = int(CONFIG["DEFAULT_RANDOM_HOST_START"])
 
 
 def random_mac():
@@ -29,7 +60,11 @@ def random_mac():
     )
 
 
-def random_ip(prefix="10.0.0.", start=50, end=250):
+def random_ip(
+    prefix=DEFAULT_ATTACK_TARGET_PREFIX,
+    start=DEFAULT_RANDOM_HOST_START,
+    end=DEFAULT_RANDOM_HOST_END,
+):
     return "{}{}".format(prefix, random.randint(start, end))
 
 
@@ -133,17 +168,17 @@ def run_udp(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", choices=["scapy", "udp"], default="scapy")
-    parser.add_argument("--iface", default="h2-eth0", help="Interface to send raw frames from")
+    parser.add_argument("--method", choices=["scapy", "udp"], default=DEFAULT_ATTACK_METHOD)
+    parser.add_argument("--iface", default=DEFAULT_MININET_ATTACK_IFACE, help="Interface to send raw frames from")
     parser.add_argument("--target", default=None)
-    parser.add_argument("--target-prefix", default="10.0.0.")
-    parser.add_argument("--start-host", type=int, default=50)
-    parser.add_argument("--end-host", type=int, default=250)
-    parser.add_argument("--rate", type=float, default=1200)
-    parser.add_argument("--burst-size", type=int, default=0, help="Packets per Scapy sendp call; 0 auto-tunes from rate")
-    parser.add_argument("--size", type=int, default=64)
-    parser.add_argument("--duration", type=float, default=60)
-    parser.add_argument("--log", default="attack_sent.csv")
+    parser.add_argument("--target-prefix", default=DEFAULT_ATTACK_TARGET_PREFIX)
+    parser.add_argument("--start-host", type=int, default=DEFAULT_RANDOM_HOST_START)
+    parser.add_argument("--end-host", type=int, default=DEFAULT_RANDOM_HOST_END)
+    parser.add_argument("--rate", type=float, default=DEFAULT_ATTACK_RATE_PPS)
+    parser.add_argument("--burst-size", type=int, default=DEFAULT_BURST_SIZE, help="Packets per Scapy sendp call; 0 auto-tunes from rate")
+    parser.add_argument("--size", type=int, default=DEFAULT_PACKET_SIZE_BYTES)
+    parser.add_argument("--duration", type=float, default=DEFAULT_ATTACK_DURATION_SECONDS)
+    parser.add_argument("--log", default=DEFAULT_ATTACK_LOG)
     return parser.parse_args()
 
 

@@ -2,27 +2,35 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+METRICS_DIR="$SCRIPT_DIR/metrics"
+TRAFFIC_DIR="$SCRIPT_DIR/traffic"
+CONFIG_FILE="$SCRIPT_DIR/config.sh"
+
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+fi
 
 NAME="test1"
-RATE=1200
-SIZE=64
-DURATION=180
+RATE="$DEFAULT_ATTACK_RATE"
+SIZE="$DEFAULT_PACKET_SIZE"
+DURATION="$DEFAULT_EXPERIMENT_DURATION"
 MITIGATION=on
 OUT_BASE="results"
-CONTROLLER="http://127.0.0.1:8080"
-ATTACK_METHOD="scapy"
-ATTACK_IFACE="h2-eth0"
+CONTROLLER="${CONTROLLER:-$DEFAULT_CONTROLLER_URL}"
+ATTACK_METHOD="$DEFAULT_ATTACK_METHOD"
+ATTACK_IFACE="${ATTACK_IFACE:-$DEFAULT_MININET_ATTACK_IFACE}"
 ATTACK_LENGTH=""
 ATTACK_TARGET=""
-ATTACK_TARGET_PREFIX="10.10.3."
+ATTACK_TARGET_PREFIX="$DEFAULT_ATTACK_TARGET_PREFIX"
 VALID_TARGET=""
 CONTROLLER_IFACE=""
 VALID_MODE="both"
-VALID_NEW_DELAY=40
-ATTACK_DELAY=30
+VALID_NEW_DELAY="$DEFAULT_RUN_EXPERIMENT_VALID_NEW_DELAY"
+ATTACK_DELAY="$DEFAULT_RUN_EXPERIMENT_ATTACK_DELAY"
 CMD_PREFIX_ATTACK=""
 CMD_PREFIX_VALID=""
-ATTACK_PYTHON_BIN="python3.8"
+ATTACK_PYTHON_BIN="$DEFAULT_ATTACKER_PYTHON_BIN"
 IPERF=off
 IPERF_SERVER_PREFIX=""
 THRESHOLD=""
@@ -30,27 +38,10 @@ REMOTE_SCRIPT_DIR=""
 CLEAR_OVS=auto
 SWITCH_IPS=""
 
-# Optional topology defaults loaded from switches.conf.
-USER=""
-TRUSTED=""
-ATTACKER=""
-VICTIM=""
-PROJECT_DIR=""
-TRUSTED_DATA_IP=""
-ATTACKER_DATA_IP=""
-VICTIM_DATA_IP=""
-VALID_TARGET_IP=""
-SWITCH_MONITOR_IPS=""
-
-# Load switch and CloudLab defaults first, then allow CLI args to override them.
-SWITCHES_CONF="$SCRIPT_DIR/switches.conf"
-if [ -f "$SWITCHES_CONF" ]; then
-  . "$SWITCHES_CONF"
-fi
-if [ "${OVS_SWITCHES+x}" != "x" ]; then
+if [ -z "${OVS_SWITCHES:-}" ]; then
   OVS_SWITCHES="s1 s2 s3 s4"
 fi
-# Use SWITCH_MONITOR_IPS from switches.conf as the default for --switch-ips.
+# Use SWITCH_MONITOR_IPS from config.sh as the default for --switch-ips.
 SWITCH_IPS="${SWITCH_IPS:-${SWITCH_MONITOR_IPS:-}}"
 
 while [ $# -gt 0 ]; do
@@ -92,12 +83,8 @@ done
 
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
-  if command -v python3.8 >/dev/null 2>&1; then
-    PYTHON_BIN="python3.8"
-  elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="python3"
-  else
-    echo "[ERROR] No Python interpreter found (python3.8/python3)" >&2
+  if ! PYTHON_BIN="$(select_python_bin)"; then
+    echo "[ERROR] No supported Python interpreter found" >&2
     exit 2
   fi
 fi
@@ -129,9 +116,9 @@ fi
 
 if [ -z "$REMOTE_SCRIPT_DIR" ]; then
   if [ -n "$PROJECT_DIR" ]; then
-    REMOTE_SCRIPT_DIR="$PROJECT_DIR/experiment_scripts"
+    REMOTE_SCRIPT_DIR="$PROJECT_DIR/experiment_scripts/traffic"
   else
-    REMOTE_SCRIPT_DIR="$SCRIPT_DIR"
+    REMOTE_SCRIPT_DIR="$TRAFFIC_DIR"
   fi
 fi
 
@@ -262,7 +249,7 @@ else
 fi
 
 # Start collectors first, then legitimate warm-up traffic.
-"$PYTHON_BIN" "$SCRIPT_DIR/collect_metrics.py" "${COLLECTOR_ARGS[@]}" > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
+"$PYTHON_BIN" "$METRICS_DIR/collect_metrics.py" "${COLLECTOR_ARGS[@]}" > "$OUT/collector_stdout.log" 2> "$OUT/collector_stderr.log" &
 echo $! > "$OUT/collector.pid"
 run_log "[INFO] Started collector pid=$(cat "$OUT/collector.pid" 2>/dev/null || echo unknown)"
 for _ in 1 2 3 4 5; do
@@ -270,7 +257,7 @@ for _ in 1 2 3 4 5; do
   sleep 0.2
 done
 
-bash "$SCRIPT_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1 \
+bash "$TRAFFIC_DIR/start_valid_flows.sh" --target "$VALID_TARGET" --duration "$DURATION" --size "$SIZE" --out "$OUT" --mode "$VALID_MODE" --new-delay "$VALID_NEW_DELAY" --cmd-prefix "$CMD_PREFIX_VALID" --iperf "$IPERF" >> "$OUT/experiment.log" 2>&1 \
   || echo "[WARN] start_valid_flows exited non-zero; legitimate traffic may be absent" >> "$OUT/experiment.log"
 append_event "valid_traffic_started" "$VALID_MODE" || true
 run_log "[INFO] Valid traffic launched (mode=$VALID_MODE)"
@@ -299,7 +286,7 @@ if [ "$RUN_ATTACK" = "yes" ]; then
   _attack_python="${_attack_python:-$PYTHON_BIN}"
 
   ATTACK_LAUNCH_RC=0
-  bash "$SCRIPT_DIR/start_attack.sh" \
+  bash "$TRAFFIC_DIR/start_attack.sh" \
     --rate "$RATE" \
     --size "$SIZE" \
     --duration "$ATTACK_DURATION" \
@@ -357,7 +344,7 @@ if [ -f "$DRIVER_EVENTS" ]; then
   tail -n +2 "$DRIVER_EVENTS" >> "$OUT/events.csv"
 fi
 
-bash "$SCRIPT_DIR/cleanup.sh" --out "$OUT" >> "$OUT/experiment.log" 2>&1 || true
+bash "$TRAFFIC_DIR/cleanup.sh" --out "$OUT" >> "$OUT/experiment.log" 2>&1 || true
 
 if [ "$IPERF" = "on" ] && [ -n "$IPERF_SERVER_PREFIX" ]; then
   eval "$IPERF_SERVER_PREFIX 'pkill -f iperf'" >> "$OUT/experiment.log" 2>&1 || true

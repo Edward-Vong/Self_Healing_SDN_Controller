@@ -21,6 +21,32 @@ import urllib.error
 import urllib.request
 
 
+def load_config():
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.sh")
+    config = {}
+    with open(config_path, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            parts = shlex.split(line, comments=True, posix=True)
+            if parts and "=" in parts[0]:
+                key, value = parts[0].split("=", 1)
+                if key.startswith("DEFAULT_"):
+                    config[key] = value
+    return config
+
+
+CONFIG = load_config()
+DEFAULT_ATTACK_METHOD = CONFIG["DEFAULT_ATTACK_METHOD"]
+DEFAULT_CONTROLLER_URL = CONFIG["DEFAULT_CONTROLLER_URL"]
+DEFAULT_LOSS_THRESHOLD_PERCENT = float(CONFIG["DEFAULT_LOSS_THRESHOLD_PERCENT"])
+DEFAULT_SATURATION_PACKET_SIZE_BYTES = int(CONFIG["DEFAULT_SATURATION_PACKET_SIZE"])
+DEFAULT_SATURATION_RATES = CONFIG["DEFAULT_SATURATION_RATES"]
+DEFAULT_SATURATION_STEP_DURATION_SECONDS = int(CONFIG["DEFAULT_SATURATION_STEP_DURATION"])
+DEFAULT_RTT_THRESHOLD_MS = float(CONFIG["DEFAULT_RTT_THRESHOLD_MS"])
+
+
 def _to_float(v, default=0.0):
     try:
         return float(v)
@@ -62,11 +88,11 @@ def run_rate_step(
     attack_method,
     target,
     iface,
-    size=256,
+    size=DEFAULT_SATURATION_PACKET_SIZE_BYTES,
     rtt_cmd_prefix='',
     python_bin='python3',
     remote_script_dir='',
-    controller='http://127.0.0.1:8080',
+    controller=DEFAULT_CONTROLLER_URL,
     collect_controller_metrics=True,
     controller_iface='',
     switch_ips='',
@@ -74,7 +100,8 @@ def run_rate_step(
     """Run attack at a single rate; return avg RTT and max CPU."""
     run_dir = os.path.join(out_dir, "rate_{}_pps".format(rate))
     os.makedirs(run_dir, exist_ok=True)
-    script_dir = remote_script_dir or os.path.dirname(os.path.abspath(__file__))
+    experiment_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script_dir = remote_script_dir or os.path.join(experiment_dir, "traffic")
     attack_sent_log = "/tmp/sdn_saturation_attack_sent_{}_pps.csv".format(rate) if cmd_prefix else os.path.join(run_dir, "attack_sent.csv")
     
     # Prepare attack command
@@ -227,19 +254,19 @@ def set_controller_mitigation(controller_base, enabled):
 
 def main():
     p = argparse.ArgumentParser(description="Find controller saturation point by ramping attack rate.")
-    p.add_argument('--controller', default='http://127.0.0.1:8080', help='Ryu REST API base URL')
+    p.add_argument('--controller', default=DEFAULT_CONTROLLER_URL, help='Ryu REST API base URL')
     p.add_argument('--out', required=True, help='Output directory for results')
     p.add_argument('--target', required=True, help='Victim IP for attack')
     p.add_argument('--iface', required=True, help='Attacker interface (e.g. eth1)')
-    p.add_argument('--attack-method', default='scapy', choices=['scapy', 'udp'])
+    p.add_argument('--attack-method', default=DEFAULT_ATTACK_METHOD, choices=['scapy', 'udp'])
     p.add_argument('--cmd-prefix', default='', help='SSH prefix for remote execution (e.g., ssh user@host)')
     p.add_argument('--rtt-cmd-prefix', default='', help='SSH prefix for RTT ping (e.g., ssh user@trusted-node). If empty, ping runs locally on the controller.')
-    p.add_argument('--step-duration', type=int, default=30, help='Duration per rate step (seconds)')
-    p.add_argument('--rtt-threshold-ms', type=float, default=50, help='RTT threshold for saturation')
-    p.add_argument('--loss-threshold-percent', type=float, default=5, help='Packet loss threshold for saturation')
-    p.add_argument('--rates', default='1000,5000,10000,20000,50000',
+    p.add_argument('--step-duration', type=int, default=DEFAULT_SATURATION_STEP_DURATION_SECONDS, help='Duration per rate step (seconds)')
+    p.add_argument('--rtt-threshold-ms', type=float, default=DEFAULT_RTT_THRESHOLD_MS, help='RTT threshold for saturation')
+    p.add_argument('--loss-threshold-percent', type=float, default=DEFAULT_LOSS_THRESHOLD_PERCENT, help='Packet loss threshold for saturation')
+    p.add_argument('--rates', default=DEFAULT_SATURATION_RATES,
                    help='Comma-separated list of attack rates to test (pps)')
-    p.add_argument('--size', type=int, default=256, help='Packet size in bytes for the attack')
+    p.add_argument('--size', type=int, default=DEFAULT_SATURATION_PACKET_SIZE_BYTES, help='Packet size in bytes for the attack')
     p.add_argument('--python-bin', default='python3', help='Python interpreter on the attacker node (for scapy/udp methods)')
     p.add_argument('--remote-script-dir', default='', help='Repo experiment_scripts path on the attacker node')
     p.add_argument(

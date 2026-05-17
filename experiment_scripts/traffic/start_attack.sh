@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RATE=1200
-SIZE=64
-DURATION=90
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="$(cd "$SCRIPT_DIR/.." && pwd)/config.sh"
+
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+fi
+
+RATE="$DEFAULT_ATTACK_RATE"
+SIZE="$DEFAULT_PACKET_SIZE"
+DURATION="$DEFAULT_ATTACK_DURATION"
 TARGET=""
-TARGET_PREFIX="10.0.0."
+TARGET_PREFIX="$DEFAULT_ATTACK_TARGET_PREFIX"
 OUT="results/tmp"
 CMD_PREFIX=""
-METHOD="scapy"
-IFACE="h2-eth0"
+METHOD="$DEFAULT_ATTACK_METHOD"
+IFACE="$DEFAULT_MININET_ATTACK_IFACE"
 REMOTE_SCRIPT_DIR=""
 # Python binary on the node where the attack actually executes.
 # When CMD_PREFIX is an SSH prefix, this must be available on the *remote* node.
@@ -34,7 +42,6 @@ while [ $# -gt 0 ]; do
 done
 
 mkdir -p "$OUT"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -z "$REMOTE_SCRIPT_DIR" ]; then
   REMOTE_SCRIPT_DIR="$SCRIPT_DIR"
 fi
